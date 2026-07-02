@@ -4,7 +4,7 @@
     "name": "ida-breakout",
     "version": "0.1.0",
     "entryPoint": "ida_breakout_entry.py",
-    "description": "Turn the Pseudocode view into a Breakout game. Every whitespace-separated token in the decompiled C source becomes a brick. The decompile listing stays visible underneath while you play.",
+    "description": "Turn the Pseudocode view into a Breakout game. Variable names, keywords, and numbers in the decompiled C source become bricks, extracted from the actually-rendered text pixels. The decompile listing stays visible underneath while you play.",
     "license": "MIT",
     "idaVersions": ">=9.0",
     "platforms": [
