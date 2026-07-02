@@ -166,8 +166,12 @@ print('ok')
 "
 ```
 
-`pseudocode.py` / `overlay.py`는 PySide6와 IDA의 실 위젯이 필요해서
-IDA 내부에서만 실제 동작 검증 가능.
+`pseudocode.py`의 검출 로직(배경색 샘플링, brick/erase rect 계산, 캐럿 필터)은
+IDA 없이도 검증 가능: `QT_QPA_PLATFORM=offscreen`으로 QApplication을 띄우고
+합성 픽셀 버퍼를 `grab=(bytes, w, h, dpr)` 파라미터로 주입하면 viewport grab을
+우회함. dpr 값을 바꿔 HiDPI 경로도, `pseudocode.np = None`으로 pure-python
+fallback 경로도 같은 방식으로 테스트 가능. viewport 탐지(`find_pseudocode_viewport`)와
+`overlay.py`는 IDA의 실 위젯이 필요해서 IDA 내부에서만 검증 가능.
 
 ### 진단
 
