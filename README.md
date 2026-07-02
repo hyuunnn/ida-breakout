@@ -53,3 +53,19 @@ Mechanics at a glance:
 - WIN / LOSE shows a banner with `[R] restart   [Esc] exit` — no
   auto-close.
 
+## Troubleshooting
+
+If the hotkey does nothing or IDA warns "no ink detected", the pixel-based
+brick detector likely doesn't recognize your IDA build or color theme yet.
+The plugin logs diagnostics to IDA's Output window (`ida_breakout_lib`
+logger, INFO level): the detected viewport class, sampled background
+colors, and line/brick counts. Please paste those lines into a GitHub
+issue — unsupported viewport classes are usually a one-line fix.
+
+To silence the logs, run this in IDA's Python console:
+
+```python
+import logging
+logging.getLogger("ida_breakout_lib").setLevel(logging.WARNING)
+```
+

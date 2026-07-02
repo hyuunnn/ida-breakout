@@ -49,3 +49,19 @@ Pseudocode 뷰 (`F5` 디컴파일 창)에서:
 - 부순 벽돌 수에 비례한 점진적 가속 (최대 2.0x).
 - WIN / LOSE 시 `[R] restart   [Esc] exit` 배너 표시 — 자동 종료 없음.
 
+## 문제 해결
+
+핫키를 눌러도 반응이 없거나 "no ink detected" 경고가 뜨면, 픽셀 기반 벽돌
+검출기가 해당 IDA 빌드나 컬러 테마를 아직 인식하지 못하는 경우일 가능성이
+큽니다. 플러그인은 IDA Output 창에 진단 로그(`ida_breakout_lib` 로거, INFO
+레벨)를 남깁니다 — 감지된 viewport 클래스, 샘플링된 배경색, 라인/벽돌 개수.
+GitHub 이슈에 이 로그를 붙여 주시면 대부분 클래스명 한 줄 추가로 지원할 수
+있습니다.
+
+로그를 끄려면 IDA Python 콘솔에서:
+
+```python
+import logging
+logging.getLogger("ida_breakout_lib").setLevel(logging.WARNING)
+```
+
