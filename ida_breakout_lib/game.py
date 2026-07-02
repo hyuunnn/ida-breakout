@@ -19,6 +19,15 @@ class Brick:
     h: int
     text: str
     alive: bool = True
+    # Local background (r, g, b) sampled around the brick at detection time —
+    # the line/token highlight it sits on. None → erase with the global bg.
+    bg: tuple = None
+    # (x, y, w, h) to paint over when the brick dies: the ink rect grown to
+    # cover the anti-aliasing halo, but clamped at the midpoint of the gap to
+    # neighbouring lines/tokens so their glyphs never get shaved. The pixel
+    # detector always sets this; the overlay assumes it is present (None only
+    # occurs in headless game-logic tests that never paint).
+    erase: tuple = None
 
 
 @dataclass

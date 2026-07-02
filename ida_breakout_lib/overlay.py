@@ -61,6 +61,7 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self._playfield_h = eff_h
 
         self._bg_color = bg_color
+        self._fill_cache = {}
         logger.info(
             "ida-breakout: bg color rgb=(%d,%d,%d)",
             self._bg_color.red(), self._bg_color.green(), self._bg_color.blue(),
@@ -156,15 +157,28 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self.timer.start()
         self.update()
 
+    def _brick_fill_color(self, brick):
+        bg = brick.bg
+        if not bg:
+            return self._bg_color
+        color = self._fill_cache.get(bg)
+        if color is None:
+            color = QtGui.QColor(*bg)
+            self._fill_cache[bg] = color
+        return color
+
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
-        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
+        # Erase with antialiasing OFF: AA blends the fill's edge pixels with
+        # the text underneath, leaving a faint 1px ghost frame.
+        p.setRenderHint(QtGui.QPainter.Antialiasing, False)
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(self._bg_color)
         for brick in self.state.dead_bricks:
-            p.drawRect(brick.x, brick.y, brick.w, brick.h)
+            p.setBrush(self._brick_fill_color(brick))
+            p.drawRect(*brick.erase)
 
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         p.setBrush(self._fg_paddle)
         pd = self.state.paddle
         p.drawRoundedRect(

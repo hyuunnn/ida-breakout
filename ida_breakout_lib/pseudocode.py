@@ -1,4 +1,5 @@
 import logging
+import math
 from collections import Counter
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -23,7 +24,11 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
     up empty highlighted regions as fake bricks.
 
     - Coarse 4x grid sampling for speed.
-    - 5-bit-per-channel quantization to merge anti-aliasing variants.
+    - Colors are counted EXACTLY (no quantization): the overlay erases dead
+      bricks by filling with these colors, so an off-by-a-few value shows up
+      as a visibly wrong rectangle. Flat fills (bg, line highlight) dominate
+      the counts anyway; anti-aliasing variants each stay below
+      `min_count_pct` and never make the cut.
     - `dedupe_dist` Manhattan distance threshold prevents near-identical colors.
     - `grab` lets the caller share an already-captured viewport buffer; saves
       a re-grab when the brick detector is going to run right after.
@@ -42,8 +47,7 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
         row_off = y * w * 4
         for x in range(0, w, step):
             off = row_off + x * 4
-            key = (buf[off + 2] & 0xF8, buf[off + 1] & 0xF8, buf[off] & 0xF8)
-            counter[key] += 1
+            counter[(buf[off + 2], buf[off + 1], buf[off])] += 1
 
     if not counter:
         return []
@@ -322,10 +326,10 @@ def detect_bricks_from_pixels(
     bg_channels = tuple((c.blue(), c.green(), c.red()) for c in bg_colors)
 
     ink_mask = None
+    pix_u8 = None
     if np is not None:
-        pixels = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3].astype(
-            np.int16, copy=False
-        )
+        pix_u8 = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3]  # B,G,R
+        pixels = pix_u8.astype(np.int16, copy=False)
         bg = np.asarray(bg_channels, dtype=np.int16)
         diff = np.abs(pixels[:, :, None, :] - bg[None, None, :, :]).sum(axis=3)
         ink_mask = ~np.any(diff <= color_threshold, axis=2)
@@ -364,27 +368,118 @@ def detect_bricks_from_pixels(
         else:
             y += 1
 
-    def _to_logical(v):
-        return int(v / dpr) if dpr > 1.001 else int(v)
-
     max_run_w_dp = int(w * max_run_w_ratio)
 
-    def _emit_brick(run_start_dp, last_ink_dp, y_start_dp, y_end_dp):
+    def _rect_colors(x0_dp, x1_dp, y0_dp, y1_dp, want_ink):
+        """Counter of exact (r, g, b) colors of the ink (or non-ink) pixels
+        inside the clamped device rect.
+        """
+        xs = max(0, x0_dp)
+        xe = min(w, x1_dp)
+        ys = max(0, y0_dp)
+        ye = min(h, y1_dp)
+        colors = Counter()
+        if xe <= xs or ye <= ys:
+            return colors
+        if ink_mask is not None:
+            m = ink_mask[ys:ye, xs:xe]
+            if not want_ink:
+                m = ~m
+            if m.any():
+                vals = pix_u8[ys:ye, xs:xe][m].astype(np.int32)  # B,G,R
+                packed = (vals[:, 2] << 16) | (vals[:, 1] << 8) | vals[:, 0]
+                uniq, counts = np.unique(packed, return_counts=True)
+                for p, c in zip(uniq.tolist(), counts.tolist()):
+                    colors[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
+            return colors
+        for yy in range(ys, ye):
+            base = yy * w * 4
+            for xx in range(xs, xe):
+                off = base + xx * 4
+                if is_ink(off) == want_ink:
+                    colors[(buf[off + 2], buf[off + 1], buf[off])] += 1
+        return colors
+
+    def _sample_brick_bg(x0_dp, x1_dp, y0_dp, y1_dp):
+        """Most common non-ink color in and just around the brick's device
+        rect — its LOCAL background (the line/token highlight it sits on), so
+        the overlay can erase with a pixel-perfect fill instead of the global
+        bg color. None if every sampled pixel is ink.
+        """
+        colors = _rect_colors(x0_dp - 3, x1_dp + 3, y0_dp, y1_dp, want_ink=False)
+        return colors.most_common(1)[0][0] if colors else None
+
+    # Anything up to ~2 logical px wide is caret-shaped.
+    caret_max_w_dp = int(round(2 * dpr)) + 1
+
+    # How far an erase rect may grow past the ink to cover the anti-aliasing
+    # halo (~2 logical px) — but never past the midpoint of the gap to the
+    # neighbouring line/token, so erasing a dead brick can't shave the glyphs
+    # next to it.
+    margin_dp = max(1, int(round(2 * dpr)))
+
+    def _erase_span(lo_dp, hi_dp, prev_hi_dp, next_lo_dp, limit_dp):
+        """Grow the ink span [lo, hi) by margin_dp, clamped at the midpoint of
+        the gap to the neighbouring line/run (None = no neighbour) and to
+        [0, limit). Used for both axes of the erase rect.
+        """
+        e0 = lo_dp - margin_dp
+        if prev_hi_dp is not None:
+            e0 = max(e0, (prev_hi_dp + lo_dp) // 2)
+        e1 = hi_dp + margin_dp
+        if next_lo_dp is not None:
+            e1 = min(e1, (hi_dp + next_lo_dp) // 2)
+        return max(0, e0), min(limit_dp, e1)
+
+    def _rect_to_logical(x0_dp, y0_dp, x1_dp, y1_dp):
+        """Device box → logical (x, y, w, h). Floor the top-left, ceil the
+        bottom-right: truncating both shaves up to 1 logical px off the
+        right/bottom edges, leaving un-erased glyph slivers.
+        """
+        x = int(math.floor(x0_dp / dpr))
+        y = int(math.floor(y0_dp / dpr))
+        return (
+            x,
+            y,
+            max(1, int(math.ceil(x1_dp / dpr)) - x),
+            max(1, int(math.ceil(y1_dp / dpr)) - y),
+        )
+
+    def _emit_brick(run_start_dp, last_ink_dp, y_start_dp, y_end_dp, erase_dp):
         width_dp = last_ink_dp - run_start_dp + 1
         if width_dp < min_run_w:
             return
         if width_dp > max_run_w_dp:
             return
-        x_log = max(0, _to_logical(run_start_dp - padding))
-        y_log = max(0, _to_logical(y_start_dp - padding))
-        w_log = max(1, _to_logical(width_dp + 2 * padding))
-        h_log = max(1, _to_logical((y_end_dp - y_start_dp) + 2 * padding))
+        # The text caret and indent-guide fragments are thin SOLID-color
+        # bars; the caret is focus-transient, so it lands in the grab but
+        # vanishes from screen once the game overlay takes focus — becoming
+        # an invisible brick. Real glyphs are anti-aliased and always carry
+        # 3+ distinct ink shades, so thin + (near-)monochrome ⇒ not text.
+        if width_dp <= caret_max_w_dp and len(_rect_colors(
+            run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp, want_ink=True
+        )) <= 2:
+            logger.info(
+                "ida-breakout: dropping caret/guide-like brick at dp(%d,%d) w=%d",
+                run_start_dp, y_start_dp, width_dp,
+            )
+            return
+        x_log, y_log, w_log, h_log = _rect_to_logical(
+            max(0, run_start_dp - padding),
+            max(0, y_start_dp - padding),
+            last_ink_dp + 1 + padding,
+            y_end_dp + padding,
+        )
         bricks.append(
-            Brick(x=x_log, y=y_log, w=w_log, h=h_log, text="")
+            Brick(
+                x=x_log, y=y_log, w=w_log, h=h_log, text="",
+                bg=_sample_brick_bg(run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp),
+                erase=_rect_to_logical(*erase_dp),
+            )
         )
 
     bricks = []
-    for y_start, y_end in line_ranges:
+    for li, (y_start, y_end) in enumerate(line_ranges):
         if ink_mask is not None:
             col_has_ink = ink_mask[y_start:y_end, :].any(axis=0)
         else:
@@ -395,6 +490,7 @@ def detect_bricks_from_pixels(
                         col_has_ink[x] = 1
                         break
 
+        runs = []
         in_run = False
         run_start = 0
         last_ink = 0
@@ -408,11 +504,32 @@ def detect_bricks_from_pixels(
                 x += 1
             else:
                 if in_run and (x - last_ink) > column_gap_tolerance:
-                    _emit_brick(run_start, last_ink, y_start, y_end)
+                    runs.append((run_start, last_ink))
                     in_run = False
                 x += 1
         if in_run:
-            _emit_brick(run_start, last_ink, y_start, y_end)
+            runs.append((run_start, last_ink))
+
+        erase_y0, erase_y1 = _erase_span(
+            y_start,
+            y_end,
+            line_ranges[li - 1][1] if li > 0 else None,
+            line_ranges[li + 1][0] if li + 1 < len(line_ranges) else None,
+            h,
+        )
+
+        for ri, (run_start, last_ink) in enumerate(runs):
+            erase_x0, erase_x1 = _erase_span(
+                run_start,
+                last_ink + 1,
+                runs[ri - 1][1] + 1 if ri > 0 else None,
+                runs[ri + 1][0] if ri + 1 < len(runs) else None,
+                w,
+            )
+            _emit_brick(
+                run_start, last_ink, y_start, y_end,
+                (erase_x0, erase_y0, erase_x1, erase_y1),
+            )
 
     if masked_rects and bricks:
         before = len(bricks)

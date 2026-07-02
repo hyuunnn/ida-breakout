@@ -66,10 +66,22 @@ ida_breakout_lib/
 흐름:
 1. `viewport.grab()` → `QImage` (RGB32)
 2. `sample_viewport_bg_colors()`로 다중 배경색 샘플링 (라인 하이라이트, 인덴트
-   가이드 등 false positive 방지)
-3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음
-4. HiDPI는 device pixel ratio로 device→logical 변환
+   가이드 등 false positive 방지). 색은 양자화 없이 **정확한 픽셀값**으로
+   수집 — erase fill로 그대로 쓰이므로 몇 단위만 어긋나도 사각형이 티가 남.
+3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음. brick마다 주변 non-ink
+   픽셀의 최빈색을 `Brick.bg`(local 배경색)로 저장 — 라인/토큰 하이라이트 위의
+   brick도 제 색으로 지워짐. erase 사각형(`Brick.erase`)도 이때 미리 계산:
+   ink보다 ~2 logical px 크게 잡아 anti-aliasing halo를 덮되, 이웃 라인/토큰과의
+   gap **중간점**에서 클램프 — 지울 때 옆 라인 글자를 깎지 않음.
+4. HiDPI는 device pixel ratio로 device→logical 변환. 좌상단은 floor,
+   우하단은 ceil — 양쪽 다 절삭하면 오른쪽/아래 모서리가 1px 덜 지워져 잔상.
 5. 자식 위젯이 차지하는 영역(스크롤바, 헤더 등)은 마스킹
+6. **캐럿 방어**: 텍스트 캐럿은 포커스가 있을 때만 그려지는 얇은 세로 막대라,
+   grab에는 찍히지만 오버레이가 포커스를 가져가면 화면에서 사라짐 → 공이
+   튕기는 "투명 벽"이 됨. 이중 방어: (a) `start_game()`이 grab 전에
+   `clearFocus()`로 캐럿을 숨기고, (b) 검출 단계에서 폭 ≤ ~2 logical px이면서
+   ink 색이 2가지 이하인 단색 막대(캐럿, 인덴트 가이드)를 brick에서 제외.
+   진짜 글리프는 anti-aliasing 때문에 항상 3가지 이상의 ink 색을 가짐.
 
 ### Viewport 식별
 
@@ -97,8 +109,11 @@ pseudocode TWidget으로 포커스를 복귀시켜 해결.
 ### Overlay 투명 자식 QWidget
 
 `BreakoutOverlay`는 viewport의 자식 QWidget. `WA_TranslucentBackground`로 텍스트가
-비쳐 보임. `paintEvent`에서는 부서진 brick 영역(`state.dead_bricks`)만 배경색
-사각형으로 erase — 매 프레임 모든 brick을 필터링하지 않음. viewport에 설치한
+비쳐 보임. `paintEvent`에서는 부서진 brick 영역(`state.dead_bricks`)만 사각형으로
+erase — 매 프레임 모든 brick을 필터링하지 않음. erase 색은 `Brick.bg`(검출 시
+샘플링한 local 배경색, 없으면 전역 배경색), 사각형은 검출 시 미리 계산된
+`Brick.erase`(halo 포함 + 이웃 중간점 클램프, 검출기가 항상 채움)를 사용하고,
+antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. viewport에 설치한
 `eventFilter`로 키 입력을 가로채고 휠 스크롤은 흡수해서 게임 중 코드가 안
 밀리게 함.
 

@@ -173,6 +173,15 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             ida_kernwin.warning("ida-breakout: could not locate the pseudocode viewport.")
             return
 
+        # The text caret (a thin focus-only vertical bar) gets painted into
+        # the grab, but disappears from screen the moment the overlay steals
+        # focus — leaving an invisible brick the ball bounces off. Drop focus
+        # BEFORE grabbing so the capture is caret-free; the overlay takes
+        # focus right after anyway.
+        focus_w = QtWidgets.QApplication.focusWidget()
+        if focus_w is not None and (focus_w is qwidget or qwidget.isAncestorOf(focus_w)):
+            focus_w.clearFocus()
+
         grab = grab_viewport_buffer(viewport)
         if grab is None:
             ida_kernwin.warning("ida-breakout: could not capture the pseudocode viewport.")
