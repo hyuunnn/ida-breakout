@@ -158,7 +158,7 @@ python3 -m py_compile ida_breakout_lib/*.py ida_breakout*.py
 python3 -c "
 from ida_breakout_lib.game import GameState, Paddle, Brick, Phase
 g = GameState(width=400, height=300, paddle=Paddle(x=160, y=280))
-g.bricks = [Brick(x=10, y=10, w=20, h=8, text='a')]
+g.bricks = [Brick(x=10, y=10, w=20, h=8)]
 g.spawn_ball_on_paddle()
 g.reset()
 assert g.phase is Phase.READY

@@ -472,7 +472,7 @@ def detect_bricks_from_pixels(
         )
         bricks.append(
             Brick(
-                x=x_log, y=y_log, w=w_log, h=h_log, text="",
+                x=x_log, y=y_log, w=w_log, h=h_log,
                 bg=_sample_brick_bg(run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp),
                 erase=_rect_to_logical(*erase_dp),
             )

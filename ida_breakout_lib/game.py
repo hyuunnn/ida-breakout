@@ -17,7 +17,6 @@ class Brick:
     y: int
     w: int
     h: int
-    text: str
     alive: bool = True
     # Local background (r, g, b) sampled around the brick at detection time —
     # the line/token highlight it sits on. None → erase with the global bg.
