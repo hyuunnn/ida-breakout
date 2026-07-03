@@ -155,8 +155,7 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
     def _restart(self):
         self.state.reset()
-        if not self.timer.isActive():
-            self.timer.start()
+        self.timer.start()
         self.update()
 
     def _brick_fill_color(self, brick):
@@ -296,21 +295,15 @@ class BreakoutOverlay(QtWidgets.QWidget):
         # is held; acting on the fake release drops the movement flag for a
         # frame and makes the paddle stutter.
         if not pressed and ev.isAutoRepeat():
-            return True
+            return
         k = ev.key()
         if k in (QtCore.Qt.Key_Left, QtCore.Qt.Key_H, QtCore.Qt.Key_A):
             self.state.moving_left = pressed
-            return True
-        if k in (QtCore.Qt.Key_Right, QtCore.Qt.Key_L, QtCore.Qt.Key_D):
+        elif k in (QtCore.Qt.Key_Right, QtCore.Qt.Key_L, QtCore.Qt.Key_D):
             self.state.moving_right = pressed
-            return True
-        if pressed and k == QtCore.Qt.Key_Space:
+        elif pressed and k == QtCore.Qt.Key_Space:
             self.state.launch_if_ready()
-            return True
-        if pressed and k == QtCore.Qt.Key_R and self.state.phase in (Phase.WON, Phase.LOST):
+        elif pressed and k == QtCore.Qt.Key_R and self.state.phase in (Phase.WON, Phase.LOST):
             self._restart()
-            return True
-        if pressed and k == QtCore.Qt.Key_Escape:
+        elif pressed and k == QtCore.Qt.Key_Escape:
             self._fire_exit()
-            return True
-        return False

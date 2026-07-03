@@ -237,10 +237,6 @@ def grab_viewport_buffer(viewport):
     pixels (2x logical on macOS Retina). The QImage we get from .toImage()
     is the same device-pixel size. The dpr lets the caller convert back
     to logical (Qt overlay) coordinates.
-
-    Qt binding builds vary: constBits() returns sip.voidptr in older PyQt5
-    (needs setsize) and memoryview in PySide6 / newer PyQt5 (already sized).
-    Handle both for safety.
     """
     if viewport is None:
         return None
@@ -259,11 +255,7 @@ def grab_viewport_buffer(viewport):
             dpr = 1.0
         if dpr <= 0:
             dpr = 1.0
-        ptr = img.constBits()
-        if hasattr(ptr, "setsize"):
-            n = img.sizeInBytes() if hasattr(img, "sizeInBytes") else img.byteCount()
-            ptr.setsize(n)
-        return bytes(ptr), w, h, dpr
+        return bytes(img.constBits()), w, h, dpr
     except Exception:
         logger.exception("grab_viewport_buffer failed")
         return None
