@@ -42,9 +42,9 @@ class Paddle:
 class Ball:
     x: float
     y: float
+    vx: float
+    vy: float
     r: float = 4.0
-    vx: float = 3.0
-    vy: float = -3.0
 
 
 SPEED_PER_BRICK = 0.01
@@ -137,7 +137,7 @@ class GameState:
         # WIN must be checked before the no-balls branch: a side hit on the
         # last brick keeps vy downward, so the ball can drain in the same
         # frame — that's a win, not a lost life.
-        if all(not b.alive for b in self.bricks):
+        if len(self.dead_bricks) == len(self.bricks):
             self.phase = Phase.WON
             return
 
@@ -154,7 +154,7 @@ class GameState:
     def _step_balls(self, dt):
         new_balls = []
         pd = self.paddle
-        for ball in list(self.balls):
+        for ball in self.balls:
             if ball.y - ball.r > self.height:
                 continue
 

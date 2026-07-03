@@ -34,10 +34,7 @@ class _StartGameHandler(ida_kernwin.action_handler_t):
         return 1
 
     def update(self, ctx):
-        w = ida_kernwin.get_current_widget()
-        if w is None:
-            return ida_kernwin.AST_DISABLE_FOR_WIDGET
-        if ida_kernwin.get_widget_type(w) == ida_kernwin.BWN_PSEUDOCODE:
+        if ctx.widget_type == ida_kernwin.BWN_PSEUDOCODE:
             return ida_kernwin.AST_ENABLE_FOR_WIDGET
         return ida_kernwin.AST_DISABLE_FOR_WIDGET
 

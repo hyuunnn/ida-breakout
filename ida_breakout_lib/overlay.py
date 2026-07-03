@@ -36,7 +36,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
-        self.setMouseTracking(False)
         self.setGeometry(0, 0, viewport.width(), viewport.height())
         self.hide()
 
@@ -58,7 +57,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
             base_speed=3.0,
         )
         self.state.spawn_ball_on_paddle()
-        self._playfield_h = eff_h
 
         self._bg_color = bg_color
         self._fill_cache = {}
@@ -306,10 +304,3 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self._fire_exit()
             return True
         return False
-
-    def resizeEvent(self, ev):
-        self.state.width = max(1, self.width())
-        new_h = min(self._playfield_h, max(1, self.height()))
-        self.state.height = new_h
-        self.state.paddle.y = max(0.0, new_h - PADDLE_BOTTOM_GAP)
-        super().resizeEvent(ev)

@@ -189,7 +189,8 @@ setLevel(logging.WARNING)`):
 
 Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌드일 때:
 
-- `_KNOWN_OUTER_VIEWERS` / `_VIEWER_CLASS_HINTS`에 새 클래스명 추가
+- `_VIEWER_CLASS_HINTS` / `_CUSTOM_CONTROL_HINTS`에 새 클래스명(부분 문자열 매칭이라
+  정확한 이름을 넣어도 됨) 추가
 - `sample_viewport_bg_colors`의 `min_count_pct` / `dedupe_dist` 튜닝
 - `color_threshold` (기본 40) 튜닝
 
@@ -206,5 +207,9 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
   `removeEventFilter` 등이 `RuntimeError: Internal C++ object already deleted`
   를 던질 수 있음. 정상 종료 경로의 양성 케이스라 조용히 삼킴 — 트레이스가
   IDA 출력창에 뜨면 사용자에게 "토글 실패"로 보여 UX가 망가짐.
-- **창 리사이즈 시 자동 종료하지 않음**: 리사이즈하면 brick 좌표가 텍스트와
-  어긋나지만 진행 중인 점수를 보존하는 쪽이 우선. 게임은 그대로 진행.
+- **창 리사이즈에 대응하지 않음**: 오버레이는 시작 시점의 viewport 크기에
+  고정 (자식 QWidget은 부모 크기를 따라가지 않고, 일부러 동기화하지도 않음 —
+  `resizeEvent` 핸들러나 viewport `Resize` 추적을 추가하지 말 것). 게임
+  무대(brick 좌표, 배경 스냅샷)가 시작 시점 화면에 묶여 있어 리사이즈를
+  따라가도 텍스트와 어긋나 의미가 없음. 진행 중인 점수 보존이 우선이라 자동
+  종료도 하지 않고 게임은 그대로 진행.

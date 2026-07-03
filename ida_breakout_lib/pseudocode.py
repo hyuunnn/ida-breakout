@@ -75,30 +75,19 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
             for rc in result
         ):
             continue
-        c = QtGui.QColor(r, g, b)
-        if not c.isValid():
-            continue
-        result.append(c)
+        result.append(QtGui.QColor(r, g, b))
         if len(result) >= max_colors:
             break
     return result
 
 
-_KNOWN_OUTER_VIEWERS = (
-    "TEAViewer",
-    "TGraphViewer",
-)
-
-
-_KNOWN_CUSTOM_CONTROLS = (
-    "TCustomControl",
-    "IDACustomViewer",
-    "IDACustomControl",
-    "PyCustomViewer",
-)
-
-
+# Substring hints matched against Qt class names. An exact class name is its
+# own substring, so unknown IDA builds are handled by appending here.
+# Known outer viewers: TEAViewer, TGraphViewer.
 _VIEWER_CLASS_HINTS = ("Viewer", "Editor", "TEA")
+
+# Known custom controls: TCustomControl, IDACustomViewer/Control, PyCustomViewer.
+_CUSTOM_CONTROL_HINTS = ("CustomViewer", "CustomControl")
 
 
 def _dump_widget_tree(qwidget, depth=0, max_depth=4):
@@ -126,7 +115,7 @@ def find_pseudocode_viewport(qwidget):
 
     Strategy:
       1. QAbstractScrollArea + viewport() — works for QPlainTextEdit-style hosts.
-      2. Match a known IDA custom-viewer class by name (TCustomControl, etc.).
+      2. Match an IDA custom-viewer class by name hint (_CUSTOM_CONTROL_HINTS).
       3. Pick the largest descendant QWidget that has a real geometry.
       4. Fall back to the outer qwidget itself.
 
@@ -146,7 +135,7 @@ def find_pseudocode_viewport(qwidget):
     _dump_widget_tree(qwidget)
 
     cls_name = qwidget.metaObject().className()
-    if cls_name in _KNOWN_OUTER_VIEWERS or any(h in cls_name for h in _VIEWER_CLASS_HINTS):
+    if any(h in cls_name for h in _VIEWER_CLASS_HINTS):
         outer_area = max(1, qwidget.width() * qwidget.height())
         biggest = None
         biggest_area = 0
@@ -190,7 +179,7 @@ def find_pseudocode_viewport(qwidget):
             cls = w.metaObject().className()
         except Exception:
             continue
-        if cls in _KNOWN_CUSTOM_CONTROLS or "CustomViewer" in cls or "CustomControl" in cls:
+        if any(h in cls for h in _CUSTOM_CONTROL_HINTS):
             logger.info("ida-breakout: picked viewport via known-class match: %s", cls)
             return w, None
 
