@@ -309,14 +309,16 @@ def detect_bricks_from_pixels(
     )
 
     masked_rects = []
-    for child in viewport.findChildren(
-        QtWidgets.QWidget, options=QtCore.Qt.FindDirectChildrenOnly
-    ):
-        if not child.isVisible():
-            continue
-        r = child.geometry()
-        if r.width() > 0 and r.height() > 0:
-            masked_rects.append(r)
+    # viewport is None in headless tests that inject `grab` directly.
+    if viewport is not None:
+        for child in viewport.findChildren(
+            QtWidgets.QWidget, options=QtCore.Qt.FindDirectChildrenOnly
+        ):
+            if not child.isVisible():
+                continue
+            r = child.geometry()
+            if r.width() > 0 and r.height() > 0:
+                masked_rects.append(r)
     if masked_rects:
         logger.info(
             "ida-breakout: masking child rects: %s",
@@ -330,9 +332,12 @@ def detect_bricks_from_pixels(
     if np is not None:
         pix_u8 = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3]  # B,G,R
         pixels = pix_u8.astype(np.int16, copy=False)
-        bg = np.asarray(bg_channels, dtype=np.int16)
-        diff = np.abs(pixels[:, :, None, :] - bg[None, None, :, :]).sum(axis=3)
-        ink_mask = ~np.any(diff <= color_threshold, axis=2)
+        # One bg color at a time: broadcasting all colors at once allocates an
+        # h*w*n_bg*3 int16 temp (~hundreds of MB on a Retina full screen).
+        ink_mask = np.ones((h, w), dtype=bool)
+        for bg_ch in bg_channels:
+            diff = np.abs(pixels - np.asarray(bg_ch, dtype=np.int16)).sum(axis=2)
+            ink_mask &= diff > color_threshold
         row_has_ink = ink_mask[:, ::2].any(axis=1)
     else:
         def is_ink(off):

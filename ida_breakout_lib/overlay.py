@@ -62,6 +62,10 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
         self._bg_color = bg_color
         self._fill_cache = {}
+        # Dead-brick erase fills are baked incrementally into this pixmap so
+        # paintEvent blits one layer instead of re-drawing every dead brick.
+        self._erase_layer = None
+        self._erased_count = 0
         logger.info(
             "ida-breakout: bg color rgb=(%d,%d,%d)",
             self._bg_color.red(), self._bg_color.green(), self._bg_color.blue(),
@@ -167,16 +171,45 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self._fill_cache[bg] = color
         return color
 
+    def _sync_erase_layer(self):
+        """Bake bricks that died since the last frame into the cached layer.
+        The layer is rebuilt from scratch when the overlay size changes or
+        dead_bricks shrank (restart)."""
+        dead = self.state.dead_bricks
+        dpr = self.devicePixelRatioF()
+        want_w = max(1, int(round(self.width() * dpr)))
+        want_h = max(1, int(round(self.height() * dpr)))
+        layer = self._erase_layer
+        if (
+            layer is None
+            or layer.width() != want_w
+            or layer.height() != want_h
+            or self._erased_count > len(dead)
+        ):
+            layer = QtGui.QPixmap(want_w, want_h)
+            layer.setDevicePixelRatio(dpr)
+            layer.fill(QtCore.Qt.transparent)
+            self._erase_layer = layer
+            self._erased_count = 0
+        if self._erased_count < len(dead):
+            lp = QtGui.QPainter(layer)
+            # Erase with antialiasing OFF: AA blends the fill's edge pixels
+            # with the text underneath, leaving a faint 1px ghost frame.
+            lp.setRenderHint(QtGui.QPainter.Antialiasing, False)
+            lp.setPen(QtCore.Qt.NoPen)
+            for brick in dead[self._erased_count:]:
+                lp.setBrush(self._brick_fill_color(brick))
+                lp.drawRect(*brick.erase)
+            lp.end()
+            self._erased_count = len(dead)
+
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
 
-        # Erase with antialiasing OFF: AA blends the fill's edge pixels with
-        # the text underneath, leaving a faint 1px ghost frame.
+        self._sync_erase_layer()
         p.setRenderHint(QtGui.QPainter.Antialiasing, False)
+        p.drawPixmap(0, 0, self._erase_layer)
         p.setPen(QtCore.Qt.NoPen)
-        for brick in self.state.dead_bricks:
-            p.setBrush(self._brick_fill_color(brick))
-            p.drawRect(*brick.erase)
 
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
         p.setBrush(self._fg_paddle)

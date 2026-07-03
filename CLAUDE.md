@@ -98,7 +98,8 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
 - `_StartGameHandler.update()`: `BWN_PSEUDOCODE` 위젯에서만 enable
 - `_UIHooks.widget_invisible`: pseudocode 탭 닫힘 감지 → 자동 종료
 - `_UIHooks.finish_populating_widget_popup`: 우클릭 메뉴에 액션 부착
-- `_HexraysHooks.refresh_pseudocode`: F5 재디컴파일 감지 → 자동 종료
+- `_HexraysHooks.refresh_pseudocode`: 게임 중인 탭(`vu.ct == active_twidget`)의
+  F5 재디컴파일만 감지 → 자동 종료. 다른 pseudocode 탭의 F5는 무시
 
 `stop_game()` 마지막에 `ida_kernwin.activate_widget(twidget, True)`을 호출하는
 이유: overlay가 `deleteLater()`로 사라진 직후 IDA의 current widget이 일시적으로
@@ -109,8 +110,10 @@ pseudocode TWidget으로 포커스를 복귀시켜 해결.
 ### Overlay 투명 자식 QWidget
 
 `BreakoutOverlay`는 viewport의 자식 QWidget. `WA_TranslucentBackground`로 텍스트가
-비쳐 보임. `paintEvent`에서는 부서진 brick 영역(`state.dead_bricks`)만 사각형으로
-erase — 매 프레임 모든 brick을 필터링하지 않음. erase 색은 `Brick.bg`(검출 시
+비쳐 보임. 부서진 brick의 erase 사각형은 QPixmap 레이어(`_erase_layer`)에
+증분으로 구워 두고 `paintEvent`는 그 레이어 한 장만 blit — 벽돌이 수천 개 죽은
+후반에도 프레임당 페인트 비용이 늘지 않음. 레이어는 오버레이 리사이즈나
+재시작(`dead_bricks`가 줄어듦)에 자동 재생성. erase 색은 `Brick.bg`(검출 시
 샘플링한 local 배경색, 없으면 전역 배경색), 사각형은 검출 시 미리 계산된
 `Brick.erase`(halo 포함 + 이웃 중간점 클램프, 검출기가 항상 채움)를 사용하고,
 antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. viewport에 설치한

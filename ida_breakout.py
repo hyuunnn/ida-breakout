@@ -67,7 +67,12 @@ class _HexraysHooks(ida_hexrays.Hexrays_Hooks):
         self.plugmod = plugmod
 
     def refresh_pseudocode(self, vu):
-        if self.plugmod.active_overlay is not None:
+        # Only the tab hosting the game — an F5 in another pseudocode tab
+        # must not kill a running game.
+        if (
+            self.plugmod.active_overlay is not None
+            and vu.ct == self.plugmod.active_twidget
+        ):
             logger.info("ida-breakout: pseudocode refreshed (F5), stopping game")
             self.plugmod.stop_game()
         return 0

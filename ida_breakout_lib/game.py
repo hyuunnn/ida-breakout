@@ -91,7 +91,7 @@ class GameState:
         self.spawn_ball_on_paddle()
 
     def spawn_ball_on_paddle(self):
-        angle = random.uniform(-math.pi / 3, math.pi / 3)
+        angle = random.uniform(-MAX_PADDLE_ANGLE, MAX_PADDLE_ANGLE)
         speed_mag = math.hypot(self.base_speed, self.base_speed)
         self.balls.append(
             Ball(
@@ -134,6 +134,13 @@ class GameState:
 
         self.balls = [b for b in self.balls if b.y - b.r <= self.height]
 
+        # WIN must be checked before the no-balls branch: a side hit on the
+        # last brick keeps vy downward, so the ball can drain in the same
+        # frame — that's a win, not a lost life.
+        if all(not b.alive for b in self.bricks):
+            self.phase = Phase.WON
+            return
+
         if not self.balls:
             self.lives -= 1
             if self.lives <= 0:
@@ -143,10 +150,6 @@ class GameState:
                 self.speed_factor = 1.0
                 self.speed_bricks = 0
                 self.spawn_ball_on_paddle()
-            return
-
-        if all(not b.alive for b in self.bricks):
-            self.phase = Phase.WON
 
     def _step_balls(self, dt):
         new_balls = []
