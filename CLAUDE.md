@@ -117,8 +117,10 @@ pseudocode TWidget으로 포커스를 복귀시켜 해결.
 샘플링한 local 배경색, 없으면 전역 배경색), 사각형은 검출 시 미리 계산된
 `Brick.erase`(halo 포함 + 이웃 중간점 클램프, 검출기가 항상 채움)를 사용하고,
 antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. viewport에 설치한
-`eventFilter`로 키 입력을 가로채고 휠 스크롤은 흡수해서 게임 중 코드가 안
-밀리게 함.
+`eventFilter`로 키 입력을 가로채고, 게임이 안 쓰는 키와 휠 스크롤까지 전부
+흡수 — ignore된 키 이벤트는 부모 viewport로 전파돼 PageUp/Down 등이 게임
+밑의 코드를 스크롤시키므로. 액션 단축키(토글 핫키 등)는 keyPressEvent 전달
+전에 디스패치되므로 여전히 동작함.
 
 ## 게임 메커니즘
 

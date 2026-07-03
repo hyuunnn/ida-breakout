@@ -2,6 +2,7 @@ import math
 import random
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Optional
 
 
 class Phase(Enum):
@@ -20,13 +21,13 @@ class Brick:
     alive: bool = True
     # Local background (r, g, b) sampled around the brick at detection time —
     # the line/token highlight it sits on. None → erase with the global bg.
-    bg: tuple = None
+    bg: Optional[tuple] = None
     # (x, y, w, h) to paint over when the brick dies: the ink rect grown to
     # cover the anti-aliasing halo, but clamped at the midpoint of the gap to
     # neighbouring lines/tokens so their glyphs never get shaved. The pixel
     # detector always sets this; the overlay assumes it is present (None only
     # occurs in headless game-logic tests that never paint).
-    erase: tuple = None
+    erase: Optional[tuple] = None
 
 
 @dataclass
@@ -129,8 +130,6 @@ class GameState:
         sub_dt = self.speed_factor / n_sub
         for _ in range(n_sub):
             self._step_balls(sub_dt)
-            if self.phase is not Phase.PLAYING:
-                return
 
         self.balls = [b for b in self.balls if b.y - b.r <= self.height]
 

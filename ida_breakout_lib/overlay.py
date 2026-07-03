@@ -220,7 +220,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
         p.setPen(self._ball_pen)
         for bl in self.state.balls:
             p.drawEllipse(QtCore.QPointF(bl.x, bl.y), bl.r, bl.r)
-        p.setPen(QtCore.Qt.NoPen)
 
         p.setFont(self._status_font)
         p.setPen(self._fg_status)
@@ -266,27 +265,38 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
         p.end()
 
+    # Keys the game doesn't use are swallowed too (accept / return True):
+    # an ignored key event propagates to the parent viewport, where PageUp/
+    # Down & co. would scroll the code out from under the brick layout.
+    # Action shortcuts (e.g. the toggle hotkey) are dispatched before
+    # keyPressEvent delivery, so they still work.
+
     def keyPressEvent(self, ev):
-        if not self._handle_key(ev, pressed=True):
-            super().keyPressEvent(ev)
+        self._handle_key(ev, pressed=True)
+        ev.accept()
 
     def keyReleaseEvent(self, ev):
-        if not self._handle_key(ev, pressed=False):
-            super().keyReleaseEvent(ev)
+        self._handle_key(ev, pressed=False)
+        ev.accept()
 
     def eventFilter(self, obj, ev):
         et = ev.type()
         if et == QtCore.QEvent.KeyPress:
-            if self._handle_key(ev, pressed=True):
-                return True
+            self._handle_key(ev, pressed=True)
+            return True
         elif et == QtCore.QEvent.KeyRelease:
-            if self._handle_key(ev, pressed=False):
-                return True
+            self._handle_key(ev, pressed=False)
+            return True
         elif et == QtCore.QEvent.Wheel:
             return True
         return super().eventFilter(obj, ev)
 
     def _handle_key(self, ev, pressed):
+        # X11 auto-repeat delivers synthetic release/press pairs while a key
+        # is held; acting on the fake release drops the movement flag for a
+        # frame and makes the paddle stutter.
+        if not pressed and ev.isAutoRepeat():
+            return True
         k = ev.key()
         if k in (QtCore.Qt.Key_Left, QtCore.Qt.Key_H, QtCore.Qt.Key_A):
             self.state.moving_left = pressed

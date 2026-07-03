@@ -18,7 +18,10 @@ def should_load() -> bool:
         return False
     raw_version = ida_kernwin.get_kernel_version()
     parts = tuple(int(p) for p in raw_version.split(".") if p.isdigit())
-    if parts and parts < (9, 0):
+    # Compare the major only: non-digit fragments get filtered out above, so
+    # a "9"-shaped result would make a tuple compare ((9,) < (9, 0)) refuse
+    # to load on a valid IDA 9.
+    if parts and parts[0] < 9:
         logger.warning("ida-breakout requires IDA 9.0+ (got %s)", raw_version)
         return False
     try:
