@@ -43,11 +43,22 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
 
     counter = Counter()
     step = 4
-    for y in range(0, h, step):
-        row_off = y * w * 4
-        for x in range(0, w, step):
-            off = row_off + x * 4
-            counter[(buf[off + 2], buf[off + 1], buf[off])] += 1
+    if np is not None:
+        arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[::step, ::step]
+        packed = (
+            (arr[..., 2].astype(np.uint32) << 16)
+            | (arr[..., 1].astype(np.uint32) << 8)
+            | arr[..., 0].astype(np.uint32)
+        )
+        uniq, counts = np.unique(packed, return_counts=True)
+        for p, c in zip(uniq.tolist(), counts.tolist()):
+            counter[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
+    else:
+        for y in range(0, h, step):
+            row_off = y * w * 4
+            for x in range(0, w, step):
+                off = row_off + x * 4
+                counter[(buf[off + 2], buf[off + 1], buf[off])] += 1
 
     if not counter:
         return []
