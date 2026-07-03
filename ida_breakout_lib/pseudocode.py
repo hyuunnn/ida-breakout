@@ -331,13 +331,22 @@ def detect_bricks_from_pixels(
     pix_u8 = None
     if np is not None:
         pix_u8 = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3]  # B,G,R
-        pixels = pix_u8.astype(np.int16, copy=False)
-        # One bg color at a time: broadcasting all colors at once allocates an
-        # h*w*n_bg*3 int16 temp (~hundreds of MB on a Retina full screen).
+        # Channel-split planes + reused (h, w) scratch buffers. Broadcasting
+        # against all bg colors at once allocates h*w*n_bg*3 int16 temps
+        # (~430MB peak / ~430ms at Retina fullscreen); a fresh (h, w, 3) diff
+        # per color still re-allocates large temps every pass. In-place ops on
+        # two scratch planes measure ~93MB / ~65ms for the same mask.
+        chans = [pix_u8[:, :, i].astype(np.int16) for i in range(3)]
+        tmp = np.empty((h, w), dtype=np.int16)
+        acc = np.empty((h, w), dtype=np.int16)  # max 3*255 fits int16
         ink_mask = np.ones((h, w), dtype=bool)
         for bg_ch in bg_channels:
-            diff = np.abs(pixels - np.asarray(bg_ch, dtype=np.int16)).sum(axis=2)
-            ink_mask &= diff > color_threshold
+            acc[:] = 0
+            for chan, c in zip(chans, bg_ch):
+                np.subtract(chan, c, out=tmp)
+                np.abs(tmp, out=tmp)
+                acc += tmp
+            ink_mask &= acc > color_threshold
         row_has_ink = ink_mask[:, ::2].any(axis=1)
     else:
         def is_ink(off):
