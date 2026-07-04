@@ -75,6 +75,10 @@ ida_breakout_lib/
    gap **중간점**에서 클램프 — 지울 때 옆 라인 글자를 깎지 않음.
 4. HiDPI는 device pixel ratio로 device→logical 변환. 좌상단은 floor,
    우하단은 ceil — 양쪽 다 절삭하면 오른쪽/아래 모서리가 1px 덜 지워져 잔상.
+   검출 튜닝 파라미터(`column_gap_tolerance`, `min_run_w/h`, `padding` 등)는
+   **logical px 기준**으로 받아 내부에서 dpr로 환산 — 1x/2x 디스플레이에서
+   같은 폰트가 같은 brick 분할을 냄. 기본값은 기존 Retina(dpr=2) device 값과
+   정확히 일치하도록 잡음 (Retina에서는 동작 변화 없음).
 5. 자식 위젯이 차지하는 영역(스크롤바, 헤더 등)은 마스킹
 6. **캐럿 방어**: 텍스트 캐럿은 포커스가 있을 때만 그려지는 얇은 세로 막대라,
    grab에는 찍히지만 오버레이가 포커스를 가져가면 화면에서 사라짐 → 공이

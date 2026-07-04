@@ -265,11 +265,11 @@ def detect_bricks_from_pixels(
     viewport,
     bg_colors,
     color_threshold=40,
-    column_gap_tolerance=4,
-    line_gap_tolerance=1,
-    min_run_w=2,
-    min_run_h=2,
-    padding=1,
+    column_gap_tolerance=2.0,
+    line_gap_tolerance=0.5,
+    min_run_w=1.0,
+    min_run_h=1.0,
+    padding=0.5,
     max_run_w_ratio=0.6,
     grab=None,
 ):
@@ -278,6 +278,12 @@ def detect_bricks_from_pixels(
     `bg_colors` is a list of QColor; a pixel is "ink" only if it differs from
     *all* of them by more than `color_threshold`. This keeps the
     current-line-highlight, selection, etc. from being mistaken for text.
+
+    The geometry tunables (`column_gap_tolerance`, `line_gap_tolerance`,
+    `min_run_w`, `min_run_h`, `padding`) are in LOGICAL px and get converted
+    to device px with the grab's dpr, so the same font splits into the same
+    bricks on 1x and HiDPI displays. The defaults reproduce the historical
+    Retina (dpr=2) device values exactly.
 
     `max_run_w_ratio` drops bricks wider than that fraction of the viewport,
     which would otherwise be a full-line highlight rather than a real token.
@@ -299,6 +305,13 @@ def detect_bricks_from_pixels(
         w, h, dpr,
         [(c.red(), c.green(), c.blue()) for c in bg_colors],
     )
+
+    # Logical-px tunables → device px (like caret_max_w_dp / margin_dp below).
+    col_gap_dp = max(1, int(round(column_gap_tolerance * dpr)))
+    line_gap_dp = max(1, int(round(line_gap_tolerance * dpr)))
+    min_run_w_dp = max(1, int(round(min_run_w * dpr)))
+    min_run_h_dp = max(1, int(round(min_run_h * dpr)))
+    padding_dp = max(1, int(round(padding * dpr)))
 
     masked_rects = []
     # viewport is None in headless tests that inject `grab` directly.
@@ -366,10 +379,10 @@ def detect_bricks_from_pixels(
             while y < h and row_has_ink[y]:
                 y += 1
             end = y
-            while line_ranges and start - line_ranges[-1][1] <= line_gap_tolerance:
+            while line_ranges and start - line_ranges[-1][1] <= line_gap_dp:
                 start = line_ranges[-1][0]
                 line_ranges.pop()
-            if end - start >= min_run_h:
+            if end - start >= min_run_h_dp:
                 line_ranges.append((start, end))
         else:
             y += 1
@@ -453,7 +466,7 @@ def detect_bricks_from_pixels(
 
     def _emit_brick(run_start_dp, last_ink_dp, y_start_dp, y_end_dp, erase_dp):
         width_dp = last_ink_dp - run_start_dp + 1
-        if width_dp < min_run_w:
+        if width_dp < min_run_w_dp:
             return
         if width_dp > max_run_w_dp:
             return
@@ -471,10 +484,10 @@ def detect_bricks_from_pixels(
             )
             return
         x_log, y_log, w_log, h_log = _rect_to_logical(
-            max(0, run_start_dp - padding),
-            max(0, y_start_dp - padding),
-            last_ink_dp + 1 + padding,
-            y_end_dp + padding,
+            max(0, run_start_dp - padding_dp),
+            max(0, y_start_dp - padding_dp),
+            last_ink_dp + 1 + padding_dp,
+            y_end_dp + padding_dp,
         )
         bricks.append(
             Brick(
@@ -509,7 +522,7 @@ def detect_bricks_from_pixels(
                 last_ink = x
                 x += 1
             else:
-                if in_run and (x - last_ink) > column_gap_tolerance:
+                if in_run and (x - last_ink) > col_gap_dp:
                     runs.append((run_start, last_ink))
                     in_run = False
                 x += 1
