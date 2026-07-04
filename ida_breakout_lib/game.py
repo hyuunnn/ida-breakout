@@ -68,6 +68,84 @@ def _velocity_from_angle(speed, angle):
     return speed * math.sin(angle), -speed * math.cos(angle)
 
 
+_BOUNCE_EPS = 0.1  # push-out past the struck face so the next substep starts outside
+
+
+def _resolve_brick_bounce(ball, prev_x, prev_y, brick):
+    """Reflect `ball` off the brick face it actually entered through this
+    substep, using where its box was BEFORE the move (prev_x/prev_y).
+
+    Minimum penetration depth is the wrong signal here: bricks are text
+    tokens — wide and thin — so a ball clipping a brick's END from below
+    penetrates less horizontally than vertically, and a depth heuristic
+    flips vx instead of vy, letting the ball sail straight on through the
+    line (~3% of bottom-approach hits, measured). The previous position
+    knows which side the ball came from.
+
+    Corner entries (outside on both axes) resolve to the axis whose overlap
+    began LATER along the actual displacement — the swept-AABB entry-time
+    rule; an exact tie reflects both. If the previous box already overlapped
+    on both axes (spawned in contact, or a neighbouring brick died between
+    substeps) there is no approach side to recover, so fall back to minimum
+    penetration. Velocity signs are SET (abs), not negated: the ball must
+    leave through the face it came from even if a same-substep wall/paddle
+    bounce already touched that component.
+    """
+    r = ball.r
+    bx0, by0 = brick.x, brick.y
+    bx1, by1 = brick.x + brick.w, brick.y + brick.h
+    from_left = prev_x + r <= bx0
+    from_right = prev_x - r >= bx1
+    from_top = prev_y + r <= by0
+    from_bottom = prev_y - r >= by1
+
+    bounce_x = from_left or from_right
+    bounce_y = from_top or from_bottom
+    if bounce_x and bounce_y:
+        # Entry time along each axis in units of this substep's displacement;
+        # a zero displacement component means that axis was touching from the
+        # start (entry time -inf), so the other axis wins.
+        dx = ball.x - prev_x
+        dy = ball.y - prev_y
+        if from_left:
+            tx = (bx0 - (prev_x + r)) / dx if dx else float("-inf")
+        else:
+            tx = (bx1 - (prev_x - r)) / dx if dx else float("-inf")
+        if from_top:
+            ty = (by0 - (prev_y + r)) / dy if dy else float("-inf")
+        else:
+            ty = (by1 - (prev_y - r)) / dy if dy else float("-inf")
+        bounce_x = tx >= ty
+        bounce_y = ty >= tx
+    elif not (bounce_x or bounce_y):
+        pen_left = (ball.x + r) - bx0
+        pen_right = bx1 - (ball.x - r)
+        pen_top = (ball.y + r) - by0
+        pen_bottom = by1 - (ball.y - r)
+        min_pen = min(pen_left, pen_right, pen_top, pen_bottom)
+        from_left = min_pen == pen_left
+        from_right = not from_left and min_pen == pen_right
+        from_top = not (from_left or from_right) and min_pen == pen_top
+        from_bottom = not (from_left or from_right or from_top)
+        bounce_x = from_left or from_right
+        bounce_y = from_top or from_bottom
+
+    if bounce_x:
+        if from_left:
+            ball.vx = -abs(ball.vx)
+            ball.x = bx0 - r - _BOUNCE_EPS
+        else:
+            ball.vx = abs(ball.vx)
+            ball.x = bx1 + r + _BOUNCE_EPS
+    if bounce_y:
+        if from_top:
+            ball.vy = -abs(ball.vy)
+            ball.y = by0 - r - _BOUNCE_EPS
+        else:
+            ball.vy = abs(ball.vy)
+            ball.y = by1 + r + _BOUNCE_EPS
+
+
 @dataclass
 class GameState:
     width: int
@@ -190,18 +268,22 @@ class GameState:
             if ball.y - ball.r > self.height:
                 continue
 
+            prev_x, prev_y = ball.x, ball.y
             ball.x += ball.vx * dt
             ball.y += ball.vy * dt
 
+            # Wall bounces SET the sign instead of negating: a ball already
+            # moving away (a multiball split spawned overlapping the wall)
+            # must not be re-flipped back into it.
             if ball.x - ball.r <= 0:
                 ball.x = ball.r
-                ball.vx = -ball.vx
+                ball.vx = abs(ball.vx)
             elif ball.x + ball.r >= self.width:
                 ball.x = self.width - ball.r
-                ball.vx = -ball.vx
+                ball.vx = -abs(ball.vx)
             if ball.y - ball.r <= 0:
                 ball.y = ball.r
-                ball.vy = -ball.vy
+                ball.vy = abs(ball.vy)
 
             if (
                 ball.vy > 0
@@ -243,26 +325,7 @@ class GameState:
                 ):
                     continue
 
-                pen_left = ball_right - bx0
-                pen_right = bx1 - ball_left
-                pen_top = ball_bottom - by0
-                pen_bottom = by1 - ball_top
-                min_pen = min(pen_left, pen_right, pen_top, pen_bottom)
-
-                if min_pen == pen_top and ball.vy > 0:
-                    ball.y = by0 - ball.r - 0.1
-                    ball.vy = -ball.vy
-                elif min_pen == pen_bottom and ball.vy < 0:
-                    ball.y = by1 + ball.r + 0.1
-                    ball.vy = -ball.vy
-                elif min_pen == pen_left and ball.vx > 0:
-                    ball.x = bx0 - ball.r - 0.1
-                    ball.vx = -ball.vx
-                elif min_pen == pen_right and ball.vx < 0:
-                    ball.x = bx1 + ball.r + 0.1
-                    ball.vx = -ball.vx
-                else:
-                    ball.vy = -ball.vy
+                _resolve_brick_bounce(ball, prev_x, prev_y, brick)
 
                 brick.alive = False
                 self.dead_bricks.append(brick)

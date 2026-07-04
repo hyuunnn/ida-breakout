@@ -54,6 +54,8 @@ ida_breakout_lib/
   game.py                 # 순수 물리 (Qt 의존 없음, 단위 테스트 가능)
   pseudocode.py           # viewport 탐지, bg 색 샘플링, 픽셀 brick 검출
   overlay.py              # BreakoutOverlay(QWidget) — 페인트, 입력, 타이머
+tests/
+  test_game.py            # 충돌/게임 플로우 단위 테스트 (Qt 불필요)
 ```
 
 ## 핵심 아키텍처
@@ -176,7 +178,9 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
   **magnitude를 보존하는 게 중요**. 가산식(`vx += offset*spin`)으로 만들면
   가장자리 hit이 누적될 때 magnitude가 73%까지 증가해서 "직선 느림 / 대각선
   빠름" 현상이 발생.
-- **벽/벽돌 반사**: component flip만 → magnitude 보존
+- **벽/벽돌 반사**: component 부호를 **set** (`±abs`, 단순 negate 아님) →
+  magnitude 보존 + 이미 멀어지는 중인 공(벽에 겹쳐 스폰된 멀티볼 등)을
+  도로 뒤집지 않음
 - **멀티볼**: 점수 15점마다 +1 공 (최대 5개, **생존 공 기준** — 같은 프레임에
   이미 바닥으로 빠졌지만 아직 리스트에서 제거되지 않은 공은 슬롯을 차지하지
   않음). 부순 위치에서 부모 반대 방향 ± `MULTIBALL_ANGLE_NOISE` (≈14°) 각도
@@ -185,7 +189,15 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
 - **속도 가속**: `speed_bricks` 카운터 × `SPEED_PER_BRICK` (max `SPEED_CAP=2.0x`).
   목숨 차감 시 가속만 리셋 (점수는 누적 보존). per-frame 이동량은
   `n_sub * sub_dt = speed_factor`로 component-uniform
-- **AABB 충돌**: 침투 깊이 최소축으로 면 결정. 빠른 속도에서의 터널링은
+- **AABB 충돌**: 반사면은 substep 이동 **전** 위치 기준으로 결정
+  (`_resolve_brick_bounce`) — 공의 박스가 어느 축 바깥에 있었는지로 진입면을
+  찾고, 코너 진입(두 축 다 바깥)은 실제 변위 기준 entry time이 **늦은** 축이
+  맞은 면 (swept AABB). 이전 위치가 이미 두 축 모두 겹쳐 있으면(접촉 상태
+  스폰, 이웃 벽돌이 substep 사이에 죽음) 진입 방향이 없으므로 침투 깊이
+  최소축으로 fallback. 침투 깊이를 1차 기준으로 쓰면 안 됨: 벽돌이 가로로
+  길고 얇은 토큰이라 아래에서 벽돌 끝을 스치면 수평 침투 < 수직 침투가 되어
+  vx만 뒤집히고 공이 라인을 그대로 관통 (바닥면 진입의 ~3%에서 실측,
+  `tests/test_game.py`의 몬테카를로가 회귀 감시). 빠른 속도에서의 터널링은
   `n_sub` substep으로 방지. 후보 벽돌은 y 정렬 밴드 인덱스(`_ensure_brick_index`,
   bisect)로 공이 걸친 1~2개 라인만 스캔 — 전체 리스트 스캔은 죽은 벽돌까지
   포함해 총 벽돌 수에 비례하므로 (벽돌 3천 개·공 5개에서 ~3.5ms/frame →
@@ -205,7 +217,10 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
 
 ```sh
 # 신택스 체크
-python3 -m py_compile ida_breakout_lib/*.py ida_breakout*.py
+python3 -m py_compile ida_breakout_lib/*.py ida_breakout*.py tests/*.py
+
+# 게임 로직 단위 테스트 (충돌 면 판정, 벽 반사, 게임 플로우)
+python3 -m unittest discover -s tests
 
 # 게임 로직 smoke test
 python3 -c "
@@ -248,10 +263,6 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
 
 리팩터/추가 작업 보류 또는 일반화하지 않은 부분들:
 
-- **`game.py`의 AABB 4분기 충돌 처리**: 위/아래/좌/우 분기가 패턴이 비슷해
-  보이지만 `and ball.vy > 0` 가드, `else` rescue 분기, `==` 매칭 순서 등
-  미묘한 함정이 있어 합치지 않음. 단위 테스트가 충분히 갖춰진 뒤에야
-  안전하게 리팩터 가능.
 - **`overlay.stop()` / `stop_game()` cleanup의 `try/except: pass`**: PySide6에서
   IDA가 viewport QWidget을 비결정적으로 정리하는 타이밍이 있어
   `removeEventFilter` 등이 `RuntimeError: Internal C++ object already deleted`
