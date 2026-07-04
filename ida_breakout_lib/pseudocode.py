@@ -14,6 +14,24 @@ from ida_breakout_lib.game import Brick
 logger = logging.getLogger(__name__)
 
 
+def _np_count_colors(bgr):
+    """Counter of exact (r, g, b) colors of a (..., 3) B,G,R uint8 array.
+    Packing each pixel into one int lets np.unique do the counting.
+    """
+    flat = bgr.reshape(-1, 3).astype(np.uint32)
+    packed = (flat[:, 2] << 16) | (flat[:, 1] << 8) | flat[:, 0]
+    uniq, counts = np.unique(packed, return_counts=True)
+    colors = Counter()
+    for p, c in zip(uniq.tolist(), counts.tolist()):
+        colors[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
+    return colors
+
+
+def _px_rgb(buf, off):
+    """(r, g, b) of the BGRx pixel at byte offset `off`."""
+    return (buf[off + 2], buf[off + 1], buf[off])
+
+
 def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe_dist=60, grab=None):
     """Return up to `max_colors` distinct dominant colors in the viewport image,
     sorted by frequency. The first one is the primary background; subsequent
@@ -41,24 +59,16 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
             return []
     buf, w, h, _dpr = grab
 
-    counter = Counter()
     step = 4
     if np is not None:
         arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[::step, ::step]
-        packed = (
-            (arr[..., 2].astype(np.uint32) << 16)
-            | (arr[..., 1].astype(np.uint32) << 8)
-            | arr[..., 0].astype(np.uint32)
-        )
-        uniq, counts = np.unique(packed, return_counts=True)
-        for p, c in zip(uniq.tolist(), counts.tolist()):
-            counter[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
+        counter = _np_count_colors(arr[..., :3])
     else:
+        counter = Counter()
         for y in range(0, h, step):
             row_off = y * w * 4
             for x in range(0, w, step):
-                off = row_off + x * 4
-                counter[(buf[off + 2], buf[off + 1], buf[off])] += 1
+                counter[_px_rgb(buf, row_off + x * 4)] += 1
 
     if not counter:
         return []
@@ -113,11 +123,14 @@ def find_pseudocode_viewport(qwidget):
     """Return the QWidget that actually paints the pseudocode text plus the
     enclosing scroll-bar host if there is one.
 
-    Strategy:
-      1. QAbstractScrollArea + viewport() — works for QPlainTextEdit-style hosts.
-      2. Match an IDA custom-viewer class by name hint (_CUSTOM_CONTROL_HINTS).
-      3. Pick the largest descendant QWidget that has a real geometry.
-      4. Fall back to the outer qwidget itself.
+    Strategy (in code order):
+      1. Outer widget matches _VIEWER_CLASS_HINTS (TEAViewer etc.): use its
+         largest visible direct child if it covers >= 50% of the outer area,
+         else the outer widget itself (WARNING logged).
+      2. QAbstractScrollArea + viewport() — QPlainTextEdit-style hosts.
+      3. Match an IDA custom-viewer class by name hint (_CUSTOM_CONTROL_HINTS).
+      4. Largest visible descendant covering > 1/4 of the outer area.
+      5. Fall back to the outer qwidget itself (WARNING logged).
 
     Always emits diagnostic logs so we can adapt to unknown IDA builds.
     """
@@ -157,7 +170,9 @@ def find_pseudocode_viewport(qwidget):
                 (biggest.x(), biggest.y(), biggest.width(), biggest.height()),
             )
             return biggest, None
-        logger.info(
+        # CLAUDE.md promises a WARNING whenever detection falls back to the
+        # outer widget, so users filtering at WARNING still see it.
+        logger.warning(
             "ida-breakout: using outer widget directly as viewport: %s", cls_name
         )
         return qwidget, None
@@ -248,9 +263,14 @@ def grab_viewport_buffer(viewport):
         if img.isNull() or img.width() < 4 or img.height() < 4:
             return None
         w, h = img.width(), img.height()
+        # Read the dpr Qt stamped on the pixmap instead of re-deriving it as
+        # w / viewport.width(): that ratio inherits the pixmap's integer size
+        # rounding (logical 1001 @ 1.5x → 1502 px → dpr 1.50050), and the
+        # ceil-based tunable conversion downstream is discontinuous just above
+        # integer products, so the noise would inflate every tunable by a
+        # device px and flip brick segmentation on 1-px window resizes.
         try:
-            logical_w = max(1, viewport.width())
-            dpr = w / float(logical_w)
+            dpr = float(pixmap.devicePixelRatio())
         except Exception:
             dpr = 1.0
         if dpr <= 0:
@@ -281,11 +301,13 @@ def detect_bricks_from_pixels(
 
     The geometry tunables (`column_gap_tolerance`, `line_gap_tolerance`,
     `min_run_w`, `min_run_h`, `padding`) are in LOGICAL px and get converted
-    to device px with the grab's dpr (ceil, so an explicit 0 disables the
-    knob), keeping the same font's brick split consistent across 1x and
-    HiDPI displays — up to device-pixel quantization: sub-pixel values like
-    0.5 necessarily round up to a whole device px at dpr=1. The defaults
-    reproduce the historical Retina (dpr=2) device values exactly.
+    to device px with the grab's dpr (gaps/padding with ceil, minimum-size
+    filters with round-to-nearest — see `_dp`/`_dp_min`; an explicit 0
+    disables the knob either way), keeping the same font's brick split
+    consistent across 1x and HiDPI displays — up to device-pixel
+    quantization: sub-pixel values like 0.5 necessarily round up to a whole
+    device px at dpr=1. The defaults reproduce the historical Retina (dpr=2)
+    device values exactly.
 
     `max_run_w_ratio` drops bricks wider than that fraction of the viewport,
     which would otherwise be a full-line highlight rather than a real token.
@@ -315,10 +337,17 @@ def detect_bricks_from_pixels(
     def _dp(logical_px):
         return int(math.ceil(logical_px * dpr))
 
+    # MINIMUM-size filters convert with round-to-nearest instead: ceil points
+    # the wrong way for a lower bound — ceil(1.0 * 1.25) = 2 would drop
+    # 1-device-px ink runs that both dpr=1 and dpr=2 keep. Positive values
+    # stay >= 1; an explicit 0 is still off.
+    def _dp_min(logical_px):
+        return max(1, int(round(logical_px * dpr))) if logical_px > 0 else 0
+
     col_gap_dp = _dp(column_gap_tolerance)
     line_gap_dp = _dp(line_gap_tolerance)
-    min_run_w_dp = _dp(min_run_w)
-    min_run_h_dp = _dp(min_run_h)
+    min_run_w_dp = _dp_min(min_run_w)
+    min_run_h_dp = _dp_min(min_run_h)
     padding_dp = _dp(padding)
 
     masked_rects = []
@@ -413,38 +442,44 @@ def detect_bricks_from_pixels(
             if not want_ink:
                 m = ~m
             if m.any():
-                vals = pix_u8[ys:ye, xs:xe][m].astype(np.int32)  # B,G,R
-                packed = (vals[:, 2] << 16) | (vals[:, 1] << 8) | vals[:, 0]
-                uniq, counts = np.unique(packed, return_counts=True)
-                for p, c in zip(uniq.tolist(), counts.tolist()):
-                    colors[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
+                return _np_count_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
             return colors
         for yy in range(ys, ye):
             base = yy * w * 4
             for xx in range(xs, xe):
                 off = base + xx * 4
                 if is_ink(off) == want_ink:
-                    colors[(buf[off + 2], buf[off + 1], buf[off])] += 1
+                    colors[_px_rgb(buf, off)] += 1
         return colors
 
-    # How far past the ink the bg sampler peeks sideways (~1.5 logical px —
-    # the historical 3 device px on Retina). Kept narrow so it stays out of
-    # neighbouring tokens' ink and (mostly) their highlight regions.
-    bg_ring_dp = _dp(1.5)
-
-    def _sample_brick_bg(x0_dp, x1_dp, y0_dp, y1_dp):
-        """Most common non-ink color in and just around the brick's device
-        rect — its LOCAL background (the line/token highlight it sits on), so
-        the overlay can erase with a pixel-perfect fill instead of the global
-        bg color. None if every sampled pixel is ink.
+    def _sample_brick_bg(x0_dp, y0_dp, x1_dp, y1_dp):
+        """Most common non-ink color inside the brick's ERASE rect — its
+        LOCAL background (the line/token highlight it sits on), so the
+        overlay can erase with a pixel-perfect fill instead of the global bg
+        color. Sampling exactly the region that will be filled guarantees
+        the fill color was observed everywhere it gets painted (a ring
+        narrower than the erase margin lets the outer erased band be filled
+        with a color never seen there, e.g. across a highlight boundary at
+        fractional dpr). None if every sampled pixel is ink.
         """
-        colors = _rect_colors(
-            x0_dp - bg_ring_dp, x1_dp + bg_ring_dp, y0_dp, y1_dp, want_ink=False
-        )
+        colors = _rect_colors(x0_dp, x1_dp, y0_dp, y1_dp, want_ink=False)
         return colors.most_common(1)[0][0] if colors else None
 
     # Anything up to ~2 logical px wide is caret-shaped.
     caret_max_w_dp = int(round(2 * dpr)) + 1
+
+    def _run_ink_rows(x0_dp, x1_dp, y0_dp, y1_dp):
+        """Number of rows in [y0, y1) where the run [x0, x1) has any ink."""
+        if ink_mask is not None:
+            return int(ink_mask[y0_dp:y1_dp, x0_dp:x1_dp].any(axis=1).sum())
+        n = 0
+        for yy in range(y0_dp, y1_dp):
+            base = yy * w * 4
+            for xx in range(x0_dp, x1_dp):
+                if is_ink(base + xx * 4):
+                    n += 1
+                    break
+        return n
 
     # How far an erase rect may grow past the ink to cover the anti-aliasing
     # halo (~2 logical px) — but never past the midpoint of the gap to the
@@ -486,13 +521,22 @@ def detect_bricks_from_pixels(
         if width_dp > max_run_w_dp:
             return
         # The text caret and indent-guide fragments are thin SOLID-color
-        # bars; the caret is focus-transient, so it lands in the grab but
-        # vanishes from screen once the game overlay takes focus — becoming
-        # an invisible brick. Real glyphs are anti-aliased and always carry
-        # 3+ distinct ink shades, so thin + (near-)monochrome ⇒ not text.
-        if width_dp <= caret_max_w_dp and len(_rect_colors(
-            run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp, want_ink=True
-        )) <= 2:
+        # bars spanning the full line band; the caret is focus-transient, so
+        # it lands in the grab but vanishes from screen once the game overlay
+        # takes focus — becoming an invisible brick. Real glyphs are usually
+        # anti-aliased and carry 3+ distinct ink shades — but with AA off
+        # (bitmap fonts, some Linux setups) a lone '|'/'l' stem is monochrome
+        # too, so also require the bar to cover ~all rows of the line band,
+        # which carets/guides do and glyph stems generally don't.
+        if (
+            width_dp <= caret_max_w_dp
+            and _run_ink_rows(
+                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp
+            ) >= 0.9 * (y_end_dp - y_start_dp)
+            and len(_rect_colors(
+                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp, want_ink=True
+            )) <= 2
+        ):
             logger.info(
                 "ida-breakout: dropping caret/guide-like brick at dp(%d,%d) w=%d",
                 run_start_dp, y_start_dp, width_dp,
@@ -507,7 +551,7 @@ def detect_bricks_from_pixels(
         bricks.append(
             Brick(
                 x=x_log, y=y_log, w=w_log, h=h_log,
-                bg=_sample_brick_bg(run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp),
+                bg=_sample_brick_bg(*erase_dp),
                 erase=_rect_to_logical(*erase_dp),
             )
         )

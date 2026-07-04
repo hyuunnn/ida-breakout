@@ -234,15 +234,16 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             overlay.deleteLater()
         except Exception:
             logger.debug("ida-breakout: overlay.deleteLater() raised during teardown", exc_info=True)
-        if twidget is not None:
-            try:
-                ida_kernwin.activate_widget(twidget, True)
-            except Exception:
-                pass
-            try:
-                ida_kernwin.refresh_idaview_anyway()
-            except Exception:
-                pass
+        # twidget is always set alongside active_overlay, so it is non-None
+        # past the early return above.
+        try:
+            ida_kernwin.activate_widget(twidget, True)
+        except Exception:
+            pass
+        try:
+            ida_kernwin.refresh_idaview_anyway()
+        except Exception:
+            pass
 
 
 class breakout_plugin_t(ida_idaapi.plugin_t):

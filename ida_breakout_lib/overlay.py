@@ -43,7 +43,7 @@ class BreakoutOverlay(QtWidgets.QWidget):
         eff_h = int(playfield_height) if playfield_height else h
         eff_h = max(60, min(eff_h, h))
         paddle = Paddle(
-            x=max(0.0, (w - PADDLE_W) / 2.0),
+            x=0.0,  # centered by reset() below
             y=max(0.0, eff_h - PADDLE_BOTTOM_GAP),
             w=PADDLE_W,
             h=PADDLE_H,
@@ -56,7 +56,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
             ball_radius=BALL_RADIUS,
             base_speed=3.0,
         )
-        self.state.spawn_ball_on_paddle()
+        # reset() is the single definition of a pristine game (paddle
+        # centering, ball spawn) — first game and [R] restart must match.
+        self.state.reset()
 
         self._bg_color = bg_color
         self._fill_cache = {}

@@ -68,26 +68,35 @@ ida_breakout_lib/
 2. `sample_viewport_bg_colors()`로 다중 배경색 샘플링 (라인 하이라이트, 인덴트
    가이드 등 false positive 방지). 색은 양자화 없이 **정확한 픽셀값**으로
    수집 — erase fill로 그대로 쓰이므로 몇 단위만 어긋나도 사각형이 티가 남.
-3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음. brick마다 주변 non-ink
-   픽셀의 최빈색을 `Brick.bg`(local 배경색)로 저장 — 라인/토큰 하이라이트 위의
-   brick도 제 색으로 지워짐. erase 사각형(`Brick.erase`)도 이때 미리 계산:
-   ink보다 ~2 logical px 크게 잡아 anti-aliasing halo를 덮되, 이웃 라인/토큰과의
-   gap **중간점**에서 클램프 — 지울 때 옆 라인 글자를 깎지 않음.
-4. HiDPI는 device pixel ratio로 device→logical 변환. 좌상단은 floor,
-   우하단은 ceil — 양쪽 다 절삭하면 오른쪽/아래 모서리가 1px 덜 지워져 잔상.
-   검출 튜닝 파라미터(`column_gap_tolerance`, `min_run_w/h`, `padding` 등)는
-   **logical px 기준**으로 받아 내부에서 dpr로 환산(`_dp()` 헬퍼, ceil 사용 —
-   명시적 0은 0으로 존중, 분수 dpr에서도 단조 스케일링) — 1x/2x 디스플레이에서
-   같은 폰트가 같은 brick 분할을 냄. 단 0.5 같은 sub-pixel 값은 dpr=1에서
-   1 device px로 양자화됨. 기본값은 기존 Retina(dpr=2) device 값과
-   정확히 일치하도록 잡음 (Retina에서는 동작 변화 없음).
+3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음. erase 사각형
+   (`Brick.erase`)을 먼저 계산: ink보다 ~2 logical px 크게 잡아 anti-aliasing
+   halo를 덮되, 이웃 라인/토큰과의 gap **중간점**에서 클램프 — 지울 때 옆 라인
+   글자를 깎지 않음. `Brick.bg`(local 배경색)는 그 **erase 사각형 내부**의
+   non-ink 최빈색 — 실제로 칠할 영역에서 관측된 색만 쓰므로 하이라이트 경계가
+   erase 밴드에 걸려도 엉뚱한 색 프린지가 안 남고, 라인/토큰 하이라이트 위의
+   brick도 제 색으로 지워짐.
+4. HiDPI는 device pixel ratio로 device→logical 변환. dpr은 grab한 pixmap의
+   `devicePixelRatio()`를 그대로 읽음 — 폭 비율(`grab폭/뷰포트폭`)로 추정하면
+   pixmap 정수 라운딩 노이즈(예: 1.5x에서 1.50050)가 ceil 경계를 넘겨 튜닝값이
+   창 폭 1px 차이로 널뛰기함. 좌상단은 floor, 우하단은 ceil — 양쪽 다 절삭하면
+   오른쪽/아래 모서리가 1px 덜 지워져 잔상. 검출 튜닝 파라미터는 **logical px
+   기준**으로 받아 내부에서 dpr로 환산: gap/padding류는 `_dp()`(ceil — 명시적
+   0은 0으로 존중, 분수 dpr에서도 단조 스케일링), 최소 크기 필터(`min_run_w/h`)는
+   `_dp_min()`(round, 최소 1 — 하한에 ceil을 쓰면 분수 dpr에서 1 device px짜리
+   ink run이 새로 탈락하는 역방향 반올림이 됨). 1x/2x 디스플레이에서 같은
+   폰트가 같은 brick 분할을 냄. 단 0.5 같은 sub-pixel 값은 dpr=1에서 1 device
+   px로 양자화됨. 기본값은 기존 Retina(dpr=2) device 값과 정확히 일치하도록
+   잡음 (Retina에서는 동작 변화 없음).
 5. 자식 위젯이 차지하는 영역(스크롤바, 헤더 등)은 마스킹
 6. **캐럿 방어**: 텍스트 캐럿은 포커스가 있을 때만 그려지는 얇은 세로 막대라,
    grab에는 찍히지만 오버레이가 포커스를 가져가면 화면에서 사라짐 → 공이
    튕기는 "투명 벽"이 됨. 이중 방어: (a) `start_game()`이 grab 전에
    `clearFocus()`로 캐럿을 숨기고, (b) 검출 단계에서 폭 ≤ ~2 logical px이면서
-   ink 색이 2가지 이하인 단색 막대(캐럿, 인덴트 가이드)를 brick에서 제외.
-   진짜 글리프는 anti-aliasing 때문에 항상 3가지 이상의 ink 색을 가짐.
+   ink 색이 2가지 이하이고 **라인 밴드 행의 ~90% 이상을 덮는** 단색 막대(캐럿,
+   인덴트 가이드 — 둘 다 라인 전체 높이로 그려짐)를 brick에서 제외. 진짜
+   글리프는 보통 anti-aliasing 때문에 3가지 이상의 ink 색을 갖지만, AA가 꺼진
+   폰트(비트맵 폰트 등)에선 단색이므로 높이 조건이 좁은 글리프('l', '|')를
+   구제함 — 글리프 stem은 밴드 전 행을 덮는 일이 드묾.
 
 ### Viewport 식별
 

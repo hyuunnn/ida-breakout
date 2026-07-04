@@ -56,6 +56,15 @@ MAX_PADDLE_ANGLE = math.pi / 3  # 60° — matches launch angle range
 MULTIBALL_ANGLE_NOISE = 0.25    # ≈ ±14° angular jitter on split
 
 
+def _velocity_from_angle(speed, angle):
+    """(vx, vy) for an upward launch at `angle` (0 = straight up), with
+    |v| == speed. Every launch/bounce must preserve magnitude — an additive
+    formulation accumulates speed on edge hits (up to +73%), making straight
+    balls slow and diagonal balls fast.
+    """
+    return speed * math.sin(angle), -speed * math.cos(angle)
+
+
 @dataclass
 class GameState:
     width: int
@@ -93,14 +102,14 @@ class GameState:
 
     def spawn_ball_on_paddle(self):
         angle = random.uniform(-MAX_PADDLE_ANGLE, MAX_PADDLE_ANGLE)
-        speed_mag = math.hypot(self.base_speed, self.base_speed)
+        vx, vy = _velocity_from_angle(self.base_speed * math.sqrt(2.0), angle)
         self.balls.append(
             Ball(
                 x=self.paddle.x + self.paddle.w / 2.0,
                 y=self.paddle.y - self.ball_radius - 1.0,
                 r=self.ball_radius,
-                vx=speed_mag * math.sin(angle),
-                vy=-speed_mag * math.cos(angle),
+                vx=vx,
+                vy=vy,
             )
         )
 
@@ -180,8 +189,7 @@ class GameState:
                 offset = (ball.x - (pd.x + pd.w / 2.0)) / (pd.w / 2.0)
                 offset = max(-1.0, min(1.0, offset))
                 angle = offset * MAX_PADDLE_ANGLE
-                ball.vx = speed * math.sin(angle)
-                ball.vy = -speed * math.cos(angle)
+                ball.vx, ball.vy = _velocity_from_angle(speed, angle)
                 ball.y = pd.y - ball.r - 0.5
 
             ball_left = ball.x - ball.r
