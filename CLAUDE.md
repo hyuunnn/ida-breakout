@@ -34,11 +34,12 @@ IDA를 재시작하면 `ida_breakout_entry.py`가 `PLUGIN_ENTRY`로 잡혀 로�
 
 Pseudocode 뷰 (`F5`로 디컴파일된 창)에서:
 
-- **시작/종료**: `Ctrl-Alt-K` 또는 우클릭 메뉴 *"ida-breakout: Start brick break"*
+- **시작**: `Ctrl-Alt-K` 또는 우클릭 메뉴 *"ida-breakout: Start brick break"*
+  (우클릭 메뉴는 게임 중엔 오버레이가 마우스를 흡수해 열리지 않음 — 시작 전용)
 - **이동**: `←` / `→` (또는 `h`/`l`, `a`/`d`)
 - **발사**: `Space`
 - **재시작**: `R` (WIN/LOSE 화면에서)
-- **종료**: `Esc`
+- **종료**: `Esc` 또는 `Ctrl-Alt-K`
 
 게임은 현재 함수의 디컴파일 결과 위에 투명 오버레이로 깔리고, 충돌 박스는
 실제 텍스트 픽셀에서 추출됨. 점수 15점마다 추가 공이 분기하고 (최대 5개),
@@ -87,7 +88,11 @@ ida_breakout_lib/
    폰트가 같은 brick 분할을 냄. 단 0.5 같은 sub-pixel 값은 dpr=1에서 1 device
    px로 양자화됨. 기본값은 기존 Retina(dpr=2) device 값과 정확히 일치하도록
    잡음 (Retina에서는 동작 변화 없음).
-5. 자식 위젯이 차지하는 영역(스크롤바, 헤더 등)은 마스킹
+5. 자식 위젯이 차지하는 영역(스크롤바, 헤더 등)은 이중으로 마스킹: 스캔
+   **전에** 해당 픽셀을 주 배경색으로 중립화하고 (fallback 경로에서 grab에
+   찍힌 스크롤바가 전 행에 ink를 뿌려 라인 밴드를 통째로 병합시키는 걸 차단 —
+   검출 후 brick 드롭만으로는 밴드 분할 오염을 되돌릴 수 없음), 스캔 **후에도**
+   겹치는 brick을 드롭
 6. **캐럿 방어**: 텍스트 캐럿은 포커스가 있을 때만 그려지는 얇은 세로 막대라,
    grab에는 찍히지만 오버레이가 포커스를 가져가면 화면에서 사라짐 → 공이
    튕기는 "투명 벽"이 됨. 이중 방어: (a) `start_game()`이 grab 전에
@@ -111,6 +116,15 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
 `breakout_plugin_t(PLUGIN_MULTI)` → `breakout_plugmod_t`. plugmod에서:
 
 - `_StartGameHandler.update()`: `BWN_PSEUDOCODE` 위젯에서만 enable
+- `toggle_game()`: 게임이 뜬 탭에서 누르면 종료(토글 off). **다른** pseudocode
+  탭에서 누르면 기존 게임을 정리하고 그 탭에서 새로 시작 — 단일 오버레이
+  아키텍처라 게임이 "이동"함. 이때 `start_game(twidget)`에 대상 위젯을 직접
+  넘김: `stop_game()`이 이전 탭을 activate하므로 `get_current_widget()`을
+  다시 읽으면 이전 탭이 나옴.
+- `start_game()`은 overlay를 `active_overlay`에 **등록한 뒤** `start()` 호출:
+  `__init__`에서 이미 이벤트 필터가 설치되므로, `start()`가 예외를 던져도
+  `stop_game()`이 정리할 수 있는 상태로 남아 입력을 삼키는 고아 오버레이가
+  안 생김.
 - `_UIHooks.widget_invisible`: pseudocode 탭 닫힘 감지 → 자동 종료
 - `_UIHooks.finish_populating_widget_popup`: 우클릭 메뉴에 액션 부착
 - `_HexraysHooks.refresh_pseudocode`: 게임 중인 탭(`vu.ct == active_twidget`)의
@@ -137,10 +151,17 @@ antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. 매 틱의 repai
 반투명 오버레이는 전체 update 시 Qt가 뷰포트 크기만큼 부모 콘텐츠를 매
 프레임 재합성하므로, 이걸 제한해야 프레임 비용이 창 크기와 무관해짐.
 WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치한
-`eventFilter`로 키 입력을 가로채고, 게임이 안 쓰는 키와 휠 스크롤까지 전부
-흡수 — ignore된 키 이벤트는 부모 viewport로 전파돼 PageUp/Down 등이 게임
-밑의 코드를 스크롤시키므로. 액션 단축키(토글 핫키 등)는 keyPressEvent 전달
-전에 디스패치되므로 여전히 동작함.
+`eventFilter`로 키 입력을 가로채고, 게임이 안 쓰는 키와 휠 스크롤, **마우스
+이벤트(클릭/드래그/더블클릭/컨텍스트 메뉴)까지 전부 흡수** — ignore된
+이벤트는 부모 viewport로 전파돼 PageUp/Down이 코드를 스크롤시키고, 클릭은
+캐럿/라인 하이라이트를 움직여 구워 둔 erase 색과 어긋나게 하며, 더블클릭
+네비게이션은 재디컴파일 → `refresh_pseudocode` 훅이 게임을 강제 종료시키므로.
+액션 단축키(토글 핫키 등)는 keyPressEvent 전달 전에 디스패치되므로 여전히
+동작함. TEAViewer는 스크롤바를 QAbstractScrollArea 없이 평범한 자식 위젯으로
+두어 스크롤바 policy 트릭이 안 통함 — `start_game()`이 outer 위젯 아래의 모든
+`QScrollBar`를 모아 overlay에 넘기고, overlay가 같은 eventFilter로 입력만
+무력화함 (숨기면 viewport가 재배치되어 시작 시점 grab 기준의 brick 좌표가
+어긋나므로 보이게 둠).
 
 ## 게임 메커니즘
 
@@ -156,8 +177,11 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
   가장자리 hit이 누적될 때 magnitude가 73%까지 증가해서 "직선 느림 / 대각선
   빠름" 현상이 발생.
 - **벽/벽돌 반사**: component flip만 → magnitude 보존
-- **멀티볼**: 점수 15점마다 +1 공 (최대 5개). 부순 위치에서 부모 반대 방향
-  ± `MULTIBALL_ANGLE_NOISE` (≈14°) 각도 노이즈, magnitude 보존
+- **멀티볼**: 점수 15점마다 +1 공 (최대 5개, **생존 공 기준** — 같은 프레임에
+  이미 바닥으로 빠졌지만 아직 리스트에서 제거되지 않은 공은 슬롯을 차지하지
+  않음). 부순 위치에서 부모 반대 방향 ± `MULTIBALL_ANGLE_NOISE` (≈14°) 각도
+  노이즈, magnitude 보존. 상한에 걸려 분기가 거부되면 `next_multiball_score`를
+  올리지 않고 슬롯이 빌 때까지 대기
 - **속도 가속**: `speed_bricks` 카운터 × `SPEED_PER_BRICK` (max `SPEED_CAP=2.0x`).
   목숨 차감 시 가속만 리셋 (점수는 누적 보존). per-frame 이동량은
   `n_sub * sub_dt = speed_factor`로 component-uniform
@@ -233,6 +257,13 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
   `removeEventFilter` 등이 `RuntimeError: Internal C++ object already deleted`
   를 던질 수 있음. 정상 종료 경로의 양성 케이스라 조용히 삼킴 — 트레이스가
   IDA 출력창에 뜨면 사용자에게 "토글 실패"로 보여 UX가 망가짐.
+- **`widget_invisible`은 탭 닫힘/숨김을 구분하지 않음**: IDA의
+  `ui_widget_invisible`은 빌드에 따라 도크 탭 전환·레이아웃 변경에서도 발화할
+  수 있고, SDK가 진짜 닫힘인지 구분할 정보를 주지 않음. 그런 빌드에서는 탭
+  전환만으로 게임이 종료되어 점수를 잃지만, 숨겨진 탭의 오버레이를 살려 두고
+  복귀 시 복원하는 방식은 그 사이의 재디컴파일/스크롤로 grab 스냅샷이 무효화될
+  위험 대비 이득이 없어 단순 종료를 유지. hide에서 발화하지 않는 빌드에서는
+  원래 의도(닫힘 감지)대로만 동작.
 - **창 리사이즈에 대응하지 않음**: 오버레이는 시작 시점의 viewport 크기에
   고정 (자식 QWidget은 부모 크기를 따라가지 않고, 일부러 동기화하지도 않음 —
   `resizeEvent` 핸들러나 viewport `Resize` 추적을 추가하지 말 것). 게임

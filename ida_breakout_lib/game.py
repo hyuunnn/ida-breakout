@@ -46,7 +46,9 @@ class Ball:
     y: float
     vx: float
     vy: float
-    r: float = 4.0
+    # No default: every spawn path must take the radius from
+    # GameState.ball_radius, so there is a single source of truth.
+    r: float
 
 
 SPEED_PER_BRICK = 0.01
@@ -269,24 +271,28 @@ class GameState:
                 self.speed_factor = min(
                     SPEED_CAP, 1.0 + self.speed_bricks * SPEED_PER_BRICK
                 )
-                if (
-                    self.score >= self.next_multiball_score
-                    and len(self.balls) + len(new_balls) < MAX_BALLS
-                ):
-                    speed = math.hypot(ball.vx, ball.vy)
-                    flip_angle = math.atan2(-ball.vy, -ball.vx) + random.uniform(
-                        -MULTIBALL_ANGLE_NOISE, MULTIBALL_ANGLE_NOISE
+                if self.score >= self.next_multiball_score:
+                    # Count only live balls against the cap: a ball that
+                    # drained this frame stays in self.balls until the
+                    # post-substep filter and must not hold a slot.
+                    n_alive = sum(
+                        1 for b in self.balls if b.y - b.r <= self.height
                     )
-                    new_balls.append(
-                        Ball(
-                            x=ball.x,
-                            y=ball.y,
-                            r=ball.r,
-                            vx=speed * math.cos(flip_angle),
-                            vy=speed * math.sin(flip_angle),
+                    if n_alive + len(new_balls) < MAX_BALLS:
+                        speed = math.hypot(ball.vx, ball.vy)
+                        flip_angle = math.atan2(-ball.vy, -ball.vx) + random.uniform(
+                            -MULTIBALL_ANGLE_NOISE, MULTIBALL_ANGLE_NOISE
                         )
-                    )
-                    self.next_multiball_score += MULTIBALL_INTERVAL
+                        new_balls.append(
+                            Ball(
+                                x=ball.x,
+                                y=ball.y,
+                                r=ball.r,
+                                vx=speed * math.cos(flip_angle),
+                                vy=speed * math.sin(flip_angle),
+                            )
+                        )
+                        self.next_multiball_score += MULTIBALL_INTERVAL
                 break
         if new_balls:
             self.balls.extend(new_balls)

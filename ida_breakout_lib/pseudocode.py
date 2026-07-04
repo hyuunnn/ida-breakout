@@ -14,13 +14,16 @@ from ida_breakout_lib.game import Brick
 logger = logging.getLogger(__name__)
 
 
-def _np_count_colors(bgr):
-    """Counter of exact (r, g, b) colors of a (..., 3) B,G,R uint8 array.
-    Packing each pixel into one int lets np.unique do the counting.
-    """
+def _np_pack_colors(bgr):
+    """Pack a (..., 3) B,G,R uint8 array into one 0xRRGGBB uint32 per pixel
+    so np.unique can count exact colors."""
     flat = bgr.reshape(-1, 3).astype(np.uint32)
-    packed = (flat[:, 2] << 16) | (flat[:, 1] << 8) | flat[:, 0]
-    uniq, counts = np.unique(packed, return_counts=True)
+    return (flat[:, 2] << 16) | (flat[:, 1] << 8) | flat[:, 0]
+
+
+def _np_count_colors(bgr):
+    """Counter of exact (r, g, b) colors of a (..., 3) B,G,R uint8 array."""
+    uniq, counts = np.unique(_np_pack_colors(bgr), return_counts=True)
     colors = Counter()
     for p, c in zip(uniq.tolist(), counts.tolist()):
         colors[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
@@ -366,6 +369,38 @@ def detect_bricks_from_pixels(
             "ida-breakout: masking child rects: %s",
             [(r.x(), r.y(), r.width(), r.height()) for r in masked_rects],
         )
+        # Neutralize masked pixels BEFORE the ink scan, not just drop
+        # overlapping bricks afterwards: a scrollbar painted into the grab
+        # (outer-widget fallback path — QWidget.grab() renders children) is
+        # a tall contiguous ink column that merges every line band it spans,
+        # and the post-detection drop can't undo that segmentation damage.
+        buf = bytearray(buf)
+        prim = bg_colors[0]
+        b0, g0, r0 = prim.blue(), prim.green(), prim.red()
+        arr = None
+        if np is not None:
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
+        for mr in masked_rects:
+            # Logical child geometry → device px; floor/ceil so the whole
+            # rect is covered.
+            xs = max(0, int(math.floor(mr.x() * dpr)))
+            ys = max(0, int(math.floor(mr.y() * dpr)))
+            xe = min(w, int(math.ceil((mr.x() + mr.width()) * dpr)))
+            ye = min(h, int(math.ceil((mr.y() + mr.height()) * dpr)))
+            if xe <= xs or ye <= ys:
+                continue
+            if arr is not None:
+                arr[ys:ye, xs:xe, 0] = b0
+                arr[ys:ye, xs:xe, 1] = g0
+                arr[ys:ye, xs:xe, 2] = r0
+            else:
+                for yy in range(ys, ye):
+                    base = yy * w * 4
+                    for xx in range(xs, xe):
+                        off = base + xx * 4
+                        buf[off] = b0
+                        buf[off + 1] = g0
+                        buf[off + 2] = r0
 
     bg_channels = tuple((c.blue(), c.green(), c.red()) for c in bg_colors)
 
@@ -429,31 +464,63 @@ def detect_bricks_from_pixels(
 
     max_run_w_dp = int(w * max_run_w_ratio)
 
-    def _rect_colors(x0_dp, x1_dp, y0_dp, y1_dp, want_ink):
-        """Counter of exact (r, g, b) colors of the ink (or non-ink) pixels
-        inside the clamped device rect.
+    def _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp):
+        return max(0, x0_dp), min(w, x1_dp), max(0, y0_dp), min(h, y1_dp)
+
+    def _rect_top_color(x0_dp, x1_dp, y0_dp, y1_dp, want_ink):
+        """Most common exact (r, g, b) among the rect's ink (or non-ink)
+        pixels, or None if there are none. Runs once per brick, so skip the
+        full color Counter _np_count_colors would build — only the winner is
+        needed, and at thousands of bricks the difference is a measurable
+        slice of detection cold start.
         """
-        xs = max(0, x0_dp)
-        xe = min(w, x1_dp)
-        ys = max(0, y0_dp)
-        ye = min(h, y1_dp)
-        colors = Counter()
+        xs, xe, ys, ye = _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp)
         if xe <= xs or ye <= ys:
-            return colors
+            return None
         if ink_mask is not None:
             m = ink_mask[ys:ye, xs:xe]
             if not want_ink:
                 m = ~m
-            if m.any():
-                return _np_count_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
-            return colors
+            if not m.any():
+                return None
+            packed = _np_pack_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
+            uniq, counts = np.unique(packed, return_counts=True)
+            # Ties: argmax picks the first (= lowest packed value), matching
+            # Counter.most_common on np.unique's ascending insertion order.
+            p = int(uniq[counts.argmax()])
+            return ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)
+        colors = Counter()
         for yy in range(ys, ye):
             base = yy * w * 4
             for xx in range(xs, xe):
                 off = base + xx * 4
                 if is_ink(off) == want_ink:
                     colors[_px_rgb(buf, off)] += 1
-        return colors
+        return colors.most_common(1)[0][0] if colors else None
+
+    def _rect_ink_color_count(x0_dp, x1_dp, y0_dp, y1_dp, cap):
+        """Number of distinct exact ink colors in the rect; the pure-python
+        path early-exits at `cap` — the caret filter only asks whether there
+        are more than 2.
+        """
+        xs, xe, ys, ye = _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp)
+        if xe <= xs or ye <= ys:
+            return 0
+        if ink_mask is not None:
+            m = ink_mask[ys:ye, xs:xe]
+            if not m.any():
+                return 0
+            return int(np.unique(_np_pack_colors(pix_u8[ys:ye, xs:xe][m])).size)
+        seen = set()
+        for yy in range(ys, ye):
+            base = yy * w * 4
+            for xx in range(xs, xe):
+                off = base + xx * 4
+                if is_ink(off):
+                    seen.add(_px_rgb(buf, off))
+                    if len(seen) >= cap:
+                        return len(seen)
+        return len(seen)
 
     def _sample_brick_bg(x0_dp, y0_dp, x1_dp, y1_dp):
         """Most common non-ink color inside the brick's ERASE rect — its
@@ -465,8 +532,7 @@ def detect_bricks_from_pixels(
         with a color never seen there, e.g. across a highlight boundary at
         fractional dpr). None if every sampled pixel is ink.
         """
-        colors = _rect_colors(x0_dp, x1_dp, y0_dp, y1_dp, want_ink=False)
-        return colors.most_common(1)[0][0] if colors else None
+        return _rect_top_color(x0_dp, x1_dp, y0_dp, y1_dp, want_ink=False)
 
     # Anything up to ~2 logical px wide is caret-shaped.
     caret_max_w_dp = int(round(2 * dpr)) + 1
@@ -536,9 +602,9 @@ def detect_bricks_from_pixels(
             and _run_ink_rows(
                 run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp
             ) >= 0.9 * (y_end_dp - y_start_dp)
-            and len(_rect_colors(
-                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp, want_ink=True
-            )) <= 2
+            and _rect_ink_color_count(
+                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp, cap=3
+            ) <= 2
         ):
             logger.info(
                 "ida-breakout: dropping caret/guide-like brick at dp(%d,%d) w=%d",

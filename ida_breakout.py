@@ -150,13 +150,31 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
         self.unregister_action()
 
     def toggle_game(self):
-        if self.active_overlay is not None:
-            self.stop_game()
+        if self.active_overlay is None:
+            self.start_game()
             return
-        self.start_game()
+        current = ida_kernwin.get_current_widget()
+        previous = self.active_twidget
+        self.stop_game()
+        # Toggling from a DIFFERENT pseudocode tab means the user wants a
+        # game there, not a remote stop of the one running off-screen.
+        # stop_game() just re-activated the old tab, so restore focus to the
+        # invoking tab and start there (single-overlay architecture: the old
+        # game moves rather than coexists).
+        if (
+            current is not None
+            and current != previous
+            and ida_kernwin.get_widget_type(current) == ida_kernwin.BWN_PSEUDOCODE
+        ):
+            try:
+                ida_kernwin.activate_widget(current, True)
+            except Exception:
+                pass
+            self.start_game(current)
 
-    def start_game(self):
-        twidget = ida_kernwin.get_current_widget()
+    def start_game(self, twidget=None):
+        if twidget is None:
+            twidget = ida_kernwin.get_current_widget()
         if twidget is None or ida_kernwin.get_widget_type(twidget) != ida_kernwin.BWN_PSEUDOCODE:
             ida_kernwin.warning("ida-breakout: focus a Pseudocode view first.")
             return
@@ -204,6 +222,11 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             return
 
         playfield_h = compute_playfield_height(viewport)
+        # All scroll bars under the outer widget, wherever they live:
+        # TEAViewer keeps them as plain children (no QAbstractScrollArea),
+        # so the overlay must filter them inert or a mid-game drag scrolls
+        # the text out from under the frozen brick layout.
+        scroll_bars = qwidget.findChildren(QtWidgets.QScrollBar)
         overlay = BreakoutOverlay(
             viewport,
             scroll_area,
@@ -211,11 +234,19 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             bg_color=bg_colors[0],
             playfield_height=playfield_h,
             on_exit=self.stop_game,
+            scroll_bars=scroll_bars,
         )
-        overlay.start()
-
+        # Register BEFORE start(): __init__ already installed event filters,
+        # so if start() raises the overlay must stay reachable for
+        # stop_game() to tear down — otherwise it leaks as an orphan that
+        # keeps swallowing input over the pseudocode view.
         self.active_overlay = overlay
         self.active_twidget = twidget
+        try:
+            overlay.start()
+        except Exception:
+            self.stop_game()
+            raise
         ida_kernwin.msg("[ida-breakout] started ({0} bricks)\n".format(len(bricks)))
 
     def stop_game(self):

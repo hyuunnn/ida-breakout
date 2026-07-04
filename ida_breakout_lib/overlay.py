@@ -14,6 +14,19 @@ PADDLE_BOTTOM_GAP = 24
 BALL_RADIUS = 5
 END_SCREEN_HINT = "[R] restart    [Esc] exit"
 
+# Mouse interactions must not reach the pseudocode surface (or its scroll
+# bars) mid-game: a click moves the caret / changes the line highlight under
+# the baked erase fills, a double-click navigates and the resulting
+# re-decompile force-stops the game, and a scrollbar drag slides the text
+# out from under the frozen brick layout.
+_MOUSE_EVENT_TYPES = frozenset({
+    QtCore.QEvent.MouseButtonPress,
+    QtCore.QEvent.MouseButtonRelease,
+    QtCore.QEvent.MouseButtonDblClick,
+    QtCore.QEvent.MouseMove,
+    QtCore.QEvent.ContextMenu,
+})
+
 
 class BreakoutOverlay(QtWidgets.QWidget):
     """Transparent child widget over the pseudocode viewport that hosts the game."""
@@ -24,8 +37,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
         scroll_area,
         bricks,
         bg_color,
-        playfield_height=None,
+        playfield_height,
         on_exit=None,
+        scroll_bars=None,
     ):
         super().__init__(viewport)
         self.viewport_widget = viewport
@@ -40,8 +54,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.hide()
 
         w, h = self.width(), self.height()
-        eff_h = int(playfield_height) if playfield_height else h
-        eff_h = max(60, min(eff_h, h))
+        # playfield_height comes from compute_playfield_height() and is a
+        # positive int; the clamp is pure defence.
+        eff_h = max(60, min(int(playfield_height), h))
         paddle = Paddle(
             x=0.0,  # centered by reset() below
             y=max(0.0, eff_h - PADDLE_BOTTOM_GAP),
@@ -101,6 +116,15 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.timer.timeout.connect(self._tick)
 
         viewport.installEventFilter(self)
+        # Scroll bars NOT hosted by a QAbstractScrollArea (TEAViewer keeps
+        # them as plain sibling children, so the policy trick below can't
+        # reach them) stay live next to the overlay. Hiding them would
+        # relayout the viewport and misalign the bricks detected from the
+        # start-time grab — filter them inert instead: the eventFilter
+        # swallows their mouse/wheel/key input.
+        self._scroll_bars = list(scroll_bars or ())
+        for sb in self._scroll_bars:
+            sb.installEventFilter(self)
         self._saved_v_policy = None
         self._saved_h_policy = None
         if scroll_area is not None:
@@ -132,6 +156,11 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self.viewport_widget.removeEventFilter(self)
         except Exception:
             pass
+        for sb in self._scroll_bars:
+            try:
+                sb.removeEventFilter(self)
+            except Exception:
+                pass
         if self.scroll_area is not None:
             try:
                 self.scroll_area.removeEventFilter(self)
@@ -315,7 +344,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
     # an ignored key event propagates to the parent viewport, where PageUp/
     # Down & co. would scroll the code out from under the brick layout.
     # Action shortcuts (e.g. the toggle hotkey) are dispatched before
-    # keyPressEvent delivery, so they still work.
+    # keyPressEvent delivery, so they still work. Mouse events are swallowed
+    # for the same reason (see _MOUSE_EVENT_TYPES): ignored ones propagate
+    # to the viewport and mutate the surface the game snapshotted.
 
     def keyPressEvent(self, ev):
         self._handle_key(ev, pressed=True)
@@ -323,6 +354,24 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
     def keyReleaseEvent(self, ev):
         self._handle_key(ev, pressed=False)
+        ev.accept()
+
+    def mousePressEvent(self, ev):
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        ev.accept()
+
+    def mouseMoveEvent(self, ev):
+        ev.accept()
+
+    def mouseDoubleClickEvent(self, ev):
+        ev.accept()
+
+    def wheelEvent(self, ev):
+        ev.accept()
+
+    def contextMenuEvent(self, ev):
         ev.accept()
 
     def eventFilter(self, obj, ev):
@@ -333,7 +382,7 @@ class BreakoutOverlay(QtWidgets.QWidget):
         elif et == QtCore.QEvent.KeyRelease:
             self._handle_key(ev, pressed=False)
             return True
-        elif et == QtCore.QEvent.Wheel:
+        elif et == QtCore.QEvent.Wheel or et in _MOUSE_EVENT_TYPES:
             return True
         return super().eventFilter(obj, ev)
 

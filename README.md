@@ -34,11 +34,11 @@ In any Pseudocode view (the `F5` decompile output):
 
 | Action            | Key                                                                 |
 | ----------------- | ------------------------------------------------------------------- |
-| Start / stop game | `Ctrl-Alt-K` *or* right-click → "ida-breakout: Start brick break"      |
+| Start game        | `Ctrl-Alt-K` *or* right-click → "ida-breakout: Start brick break"      |
 | Move paddle       | `←` / `→` (or `h`/`l`, `a`/`d`)                                     |
 | Launch ball       | `Space`                                                             |
 | Restart           | `R` (after WIN / LOSE)                                              |
-| Quit              | `Esc`                                                               |
+| Quit              | `Esc` or `Ctrl-Alt-K` (the overlay swallows right-clicks mid-game) |
 
 The game runs as a transparent overlay on the decompiled function.
 Bricks are extracted from the actually-rendered text pixels — what you
