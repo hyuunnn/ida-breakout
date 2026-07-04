@@ -56,6 +56,7 @@ ida_breakout_lib/
   overlay.py              # BreakoutOverlay(QWidget) — 페인트, 입력, 타이머
 tests/
   test_game.py            # 충돌/게임 플로우 단위 테스트 (Qt 불필요)
+  test_pseudocode.py      # 검출기 헤드리스 테스트 (offscreen Qt + 합성 grab 주입)
 ```
 
 ## 핵심 아키텍처
@@ -238,7 +239,10 @@ print('ok')
 IDA 없이도 검증 가능: `QT_QPA_PLATFORM=offscreen`으로 QApplication을 띄우고
 합성 픽셀 버퍼를 `grab=(bytes, w, h, dpr)` 파라미터로 주입하면 viewport grab을
 우회함. dpr 값을 바꿔 HiDPI 경로도, `pseudocode.np = None`으로 pure-python
-fallback 경로도 같은 방식으로 테스트 가능. viewport 탐지(`find_pseudocode_viewport`)와
+fallback 경로도 같은 방식으로 테스트 가능 — `tests/test_pseudocode.py`가 이
+방식으로 검출 기하(padding/margin/중간점 클램프), local bg 샘플링, 캐럿 필터,
+dpr 1x/2x 동일성, 자식 위젯 마스킹을 numpy/pure 두 경로 모두에서 회귀 감시함.
+viewport 탐지(`find_pseudocode_viewport`)와
 `overlay.py`는 IDA의 실 위젯이 필요해서 IDA 내부에서만 검증 가능.
 
 ### 진단
