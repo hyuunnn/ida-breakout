@@ -467,20 +467,24 @@ def detect_bricks_from_pixels(
     def _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp):
         return max(0, x0_dp), min(w, x1_dp), max(0, y0_dp), min(h, y1_dp)
 
-    def _rect_top_color(x0_dp, x1_dp, y0_dp, y1_dp, want_ink):
-        """Most common exact (r, g, b) among the rect's ink (or non-ink)
-        pixels, or None if there are none. Runs once per brick, so skip the
-        full color Counter _np_count_colors would build — only the winner is
-        needed, and at thousands of bricks the difference is a measurable
-        slice of detection cold start.
+    def _sample_brick_bg(x0_dp, y0_dp, x1_dp, y1_dp):
+        """Most common exact non-ink (r, g, b) inside the brick's ERASE rect —
+        its LOCAL background (the line/token highlight it sits on), so the
+        overlay can erase with a pixel-perfect fill instead of the global bg
+        color. Sampling exactly the region that will be filled guarantees
+        the fill color was observed everywhere it gets painted (a ring
+        narrower than the erase margin lets the outer erased band be filled
+        with a color never seen there, e.g. across a highlight boundary at
+        fractional dpr). None if every sampled pixel is ink. Runs once per
+        brick, so skip the full color Counter _np_count_colors would build —
+        only the winner is needed, and at thousands of bricks the difference
+        is a measurable slice of detection cold start.
         """
         xs, xe, ys, ye = _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp)
         if xe <= xs or ye <= ys:
             return None
         if ink_mask is not None:
-            m = ink_mask[ys:ye, xs:xe]
-            if not want_ink:
-                m = ~m
+            m = ~ink_mask[ys:ye, xs:xe]
             if not m.any():
                 return None
             packed = _np_pack_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
@@ -494,7 +498,7 @@ def detect_bricks_from_pixels(
             base = yy * w * 4
             for xx in range(xs, xe):
                 off = base + xx * 4
-                if is_ink(off) == want_ink:
+                if not is_ink(off):
                     colors[_px_rgb(buf, off)] += 1
         return colors.most_common(1)[0][0] if colors else None
 
@@ -521,18 +525,6 @@ def detect_bricks_from_pixels(
                     if len(seen) >= cap:
                         return len(seen)
         return len(seen)
-
-    def _sample_brick_bg(x0_dp, y0_dp, x1_dp, y1_dp):
-        """Most common non-ink color inside the brick's ERASE rect — its
-        LOCAL background (the line/token highlight it sits on), so the
-        overlay can erase with a pixel-perfect fill instead of the global bg
-        color. Sampling exactly the region that will be filled guarantees
-        the fill color was observed everywhere it gets painted (a ring
-        narrower than the erase margin lets the outer erased band be filled
-        with a color never seen there, e.g. across a highlight boundary at
-        fractional dpr). None if every sampled pixel is ink.
-        """
-        return _rect_top_color(x0_dp, x1_dp, y0_dp, y1_dp, want_ink=False)
 
     # Anything up to ~2 logical px wide is caret-shaped.
     caret_max_w_dp = int(round(2 * dpr)) + 1
