@@ -131,7 +131,12 @@ pseudocode TWidget으로 포커스를 복귀시켜 해결.
 재시작(`dead_bricks`가 줄어듦)에 자동 재생성. erase 색은 `Brick.bg`(검출 시
 샘플링한 local 배경색, 없으면 전역 배경색), 사각형은 검출 시 미리 계산된
 `Brick.erase`(halo 포함 + 이웃 중간점 클램프, 검출기가 항상 채움)를 사용하고,
-antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. viewport에 설치한
+antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. 매 틱의 repaint는
+`update(QRegion)`으로 실제 바뀐 영역(패들/공의 이전+현재 rect, 방금 죽은
+벽돌의 erase rect, 상태 텍스트가 바뀐 프레임의 상단 밴드)만 invalidate —
+반투명 오버레이는 전체 update 시 Qt가 뷰포트 크기만큼 부모 콘텐츠를 매
+프레임 재합성하므로, 이걸 제한해야 프레임 비용이 창 크기와 무관해짐.
+WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치한
 `eventFilter`로 키 입력을 가로채고, 게임이 안 쓰는 키와 휠 스크롤까지 전부
 흡수 — ignore된 키 이벤트는 부모 viewport로 전파돼 PageUp/Down 등이 게임
 밑의 코드를 스크롤시키므로. 액션 단축키(토글 핫키 등)는 keyPressEvent 전달
@@ -157,7 +162,11 @@ antialiasing은 꺼서 가장자리 블렌딩 잔상을 방지. viewport에 설�
   목숨 차감 시 가속만 리셋 (점수는 누적 보존). per-frame 이동량은
   `n_sub * sub_dt = speed_factor`로 component-uniform
 - **AABB 충돌**: 침투 깊이 최소축으로 면 결정. 빠른 속도에서의 터널링은
-  `n_sub` substep으로 방지
+  `n_sub` substep으로 방지. 후보 벽돌은 y 정렬 밴드 인덱스(`_ensure_brick_index`,
+  bisect)로 공이 걸친 1~2개 라인만 스캔 — 전체 리스트 스캔은 죽은 벽돌까지
+  포함해 총 벽돌 수에 비례하므로 (벽돌 3천 개·공 5개에서 ~3.5ms/frame →
+  인덱스로 ~0.04ms). 인덱스는 bricks 리스트의 identity/길이 변화에만 재빌드
+  (brick 좌표는 검출 후 불변이라는 가정)
 - **종료/재시작**: WIN/LOSE 시 타이머만 정지, 자동 종료 없음. 배너 +
   `[R] restart  [Esc] exit` 힌트 표시. `R` → `GameState.reset()`로 brick 전부
   alive 복원, 점수/목숨/속도/멀티볼 카운터 초기화. `Esc` → 종료

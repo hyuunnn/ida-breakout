@@ -1,3 +1,4 @@
+import bisect
 import math
 import random
 from dataclasses import dataclass, field
@@ -83,6 +84,15 @@ class GameState:
     ball_radius: float = 5.0
     base_speed: float = 3.0
     dead_bricks: list = field(default_factory=list)
+    # Lazily built y-sorted view over `bricks` so collision checks only scan
+    # the line bands the ball overlaps, instead of every brick ever detected
+    # (dead ones included). Rebuilt when the list object or its length
+    # changes; brick rects never move after detection, so coordinate
+    # mutation is not a supported invalidation trigger.
+    _index_src: Optional[list] = field(default=None, init=False, repr=False)
+    _bricks_by_y: list = field(default_factory=list, init=False, repr=False)
+    _brick_y0s: list = field(default_factory=list, init=False, repr=False)
+    _max_brick_h: float = field(default=0.0, init=False, repr=False)
 
     def reset(self):
         for b in self.bricks:
@@ -159,7 +169,19 @@ class GameState:
                 self.speed_bricks = 0
                 self.spawn_ball_on_paddle()
 
+    def _ensure_brick_index(self):
+        bricks = self.bricks
+        if self._index_src is bricks and len(self._brick_y0s) == len(bricks):
+            return
+        # Stable sort: bricks sharing a y keep detection order (left to right),
+        # so multi-overlap resolution matches the old full-list scan.
+        self._bricks_by_y = sorted(bricks, key=lambda b: b.y)
+        self._brick_y0s = [b.y for b in self._bricks_by_y]
+        self._max_brick_h = max((b.h for b in bricks), default=0)
+        self._index_src = bricks
+
     def _step_balls(self, dt):
+        self._ensure_brick_index()
         new_balls = []
         pd = self.paddle
         for ball in self.balls:
@@ -197,7 +219,14 @@ class GameState:
             ball_top = ball.y - ball.r
             ball_bottom = ball.y + ball.r
 
-            for brick in self.bricks:
+            # Candidate bricks by y band: y0 <= ball_bottom and
+            # y0 >= ball_top - max_h is a superset of the exact AABB test
+            # below, so only the 1-2 lines under the ball get scanned.
+            lo = bisect.bisect_left(
+                self._brick_y0s, ball_top - self._max_brick_h
+            )
+            hi = bisect.bisect_right(self._brick_y0s, ball_bottom)
+            for brick in self._bricks_by_y[lo:hi]:
                 if not brick.alive:
                     continue
                 bx0 = brick.x

@@ -66,6 +66,14 @@ class BreakoutOverlay(QtWidgets.QWidget):
         # paintEvent blits one layer instead of re-drawing every dead brick.
         self._erase_layer = None
         self._erased_count = 0
+        # Dirty-region bookkeeping for _tick(): a full update() on a
+        # translucent overlay makes Qt recomposite the whole viewport-sized
+        # parent content every frame. Limiting update() to what actually
+        # changed (paddle, balls, newly dead bricks, status line) keeps the
+        # per-frame composite cost independent of window size.
+        self._prev_dyn_region = QtGui.QRegion()
+        self._dirty_dead = 0
+        self._last_status = None
         logger.info(
             "ida-breakout: bg color rgb=(%d,%d,%d)",
             self._bg_color.red(), self._bg_color.green(), self._bg_color.blue(),
@@ -84,6 +92,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self._banner_font = QtGui.QFont(self.font())
         self._banner_font.setBold(True)
         self._banner_font.setPointSize(self._banner_font.pointSize() + 18)
+        # Full-width band the status text lives in (drawn at y=6, right-
+        # aligned, so its left edge shifts as the text grows/shrinks).
+        self._status_strip_h = 6 + QtGui.QFontMetrics(self._status_font).height() + 2
 
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(TICK_MS)
@@ -147,7 +158,38 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.state.step()
         if self.state.phase in (Phase.WON, Phase.LOST):
             self.timer.stop()
-        self.update()
+            self.update()  # end banner covers the middle — repaint everything
+            return
+        self.update(self._dirty_region())
+
+    def _dirty_region(self):
+        """Region worth repainting this frame: dynamic objects at their old
+        and new positions, erase rects of bricks that died since the last
+        frame, and the status band when its text changed. Margins are 3px
+        for anti-aliasing plus the 1px ball outline.
+        """
+        pd = self.state.paddle
+        cur = QtGui.QRegion(
+            QtCore.QRect(int(pd.x) - 3, int(pd.y) - 3, int(pd.w) + 7, int(pd.h) + 7)
+        )
+        for bl in self.state.balls:
+            d = int(2 * bl.r) + 7
+            cur |= QtCore.QRect(int(bl.x - bl.r) - 3, int(bl.y - bl.r) - 3, d, d)
+        region = cur | self._prev_dyn_region
+        self._prev_dyn_region = cur
+
+        dead = self.state.dead_bricks
+        if self._dirty_dead > len(dead):  # restart shrank the list
+            self._dirty_dead = 0
+        for brick in dead[self._dirty_dead:]:
+            region |= QtCore.QRect(*brick.erase)
+        self._dirty_dead = len(dead)
+
+        status = self._status_text()
+        if status != self._last_status:
+            self._last_status = status
+            region |= QtCore.QRect(0, 0, self.width(), self._status_strip_h)
+        return region
 
     def _fire_exit(self):
         try:
@@ -159,6 +201,16 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.state.reset()
         self.timer.start()
         self.update()
+
+    def _status_text(self):
+        status = "score: {0}    lives: {1}".format(self.state.score, self.state.lives)
+        if self.state.speed_factor > 1.05:
+            status += "    speed: {0:.1f}x".format(self.state.speed_factor)
+        if len(self.state.balls) > 1:
+            status += "    balls: {0}".format(len(self.state.balls))
+        if self.state.phase is Phase.READY:
+            status += "    [SPACE to launch]"
+        return status
 
     def _brick_fill_color(self, brick):
         bg = brick.bg
@@ -224,17 +276,10 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
         p.setFont(self._status_font)
         p.setPen(self._fg_status)
-        status = "score: {0}    lives: {1}".format(self.state.score, self.state.lives)
-        if self.state.speed_factor > 1.05:
-            status += "    speed: {0:.1f}x".format(self.state.speed_factor)
-        if len(self.state.balls) > 1:
-            status += "    balls: {0}".format(len(self.state.balls))
-        if self.state.phase is Phase.READY:
-            status += "    [SPACE to launch]"
         p.drawText(
             self.rect().adjusted(8, 6, -8, 0),
             QtCore.Qt.AlignTop | QtCore.Qt.AlignRight,
-            status,
+            self._status_text(),
         )
 
         if self.state.phase in (Phase.WON, Phase.LOST):

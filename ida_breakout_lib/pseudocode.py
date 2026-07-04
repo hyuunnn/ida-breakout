@@ -389,7 +389,10 @@ def detect_bricks_from_pixels(
                 np.abs(tmp, out=tmp)
                 acc += tmp
             ink_mask &= acc > color_threshold
-        row_has_ink = ink_mask[:, ::2].any(axis=1)
+        # .tolist(): the line-range scan below reads one element per row in
+        # a Python loop, and numpy scalar indexing boxes every access into a
+        # fresh np.bool_ — ~10x slower than iterating a plain list.
+        row_has_ink = ink_mask[:, ::2].any(axis=1).tolist()
     else:
         def is_ink(off):
             b = buf[off]
@@ -559,7 +562,9 @@ def detect_bricks_from_pixels(
     bricks = []
     for li, (y_start, y_end) in enumerate(line_ranges):
         if ink_mask is not None:
-            col_has_ink = ink_mask[y_start:y_end, :].any(axis=0)
+            # .tolist() for the same reason as row_has_ink: the run scan
+            # below indexes per column in a Python loop.
+            col_has_ink = ink_mask[y_start:y_end, :].any(axis=0).tolist()
         else:
             col_has_ink = bytearray(w)
             for x in range(w):
