@@ -356,6 +356,14 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self._handle_key(ev, pressed=False)
         ev.accept()
 
+    def focusOutEvent(self, ev):
+        # A held movement key's KeyRelease is delivered to whoever stole
+        # focus (IDA dialog, another dock), so the flag would stay stuck
+        # True and the paddle would drift on its own after focus returns.
+        self.state.moving_left = False
+        self.state.moving_right = False
+        super().focusOutEvent(ev)
+
     def mousePressEvent(self, ev):
         ev.accept()
 
