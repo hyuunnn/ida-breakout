@@ -281,9 +281,11 @@ def detect_bricks_from_pixels(
 
     The geometry tunables (`column_gap_tolerance`, `line_gap_tolerance`,
     `min_run_w`, `min_run_h`, `padding`) are in LOGICAL px and get converted
-    to device px with the grab's dpr, so the same font splits into the same
-    bricks on 1x and HiDPI displays. The defaults reproduce the historical
-    Retina (dpr=2) device values exactly.
+    to device px with the grab's dpr (ceil, so an explicit 0 disables the
+    knob), keeping the same font's brick split consistent across 1x and
+    HiDPI displays — up to device-pixel quantization: sub-pixel values like
+    0.5 necessarily round up to a whole device px at dpr=1. The defaults
+    reproduce the historical Retina (dpr=2) device values exactly.
 
     `max_run_w_ratio` drops bricks wider than that fraction of the viewport,
     which would otherwise be a full-line highlight rather than a real token.
@@ -306,12 +308,18 @@ def detect_bricks_from_pixels(
         [(c.red(), c.green(), c.blue()) for c in bg_colors],
     )
 
-    # Logical-px tunables → device px (like caret_max_w_dp / margin_dp below).
-    col_gap_dp = max(1, int(round(column_gap_tolerance * dpr)))
-    line_gap_dp = max(1, int(round(line_gap_tolerance * dpr)))
-    min_run_w_dp = max(1, int(round(min_run_w * dpr)))
-    min_run_h_dp = max(1, int(round(min_run_h * dpr)))
-    padding_dp = max(1, int(round(padding * dpr)))
+    # Logical-px tunables → device px. ceil keeps sub-pixel values effective
+    # at dpr=1 (ceil(0.5)=1), scales monotonically at fractional dpr where
+    # round-half-to-even dips low (round(2.5)=2), and respects an explicit 0
+    # (feature off). NOT used for caret_max_w_dp, which has its own +1 slack.
+    def _dp(logical_px):
+        return int(math.ceil(logical_px * dpr))
+
+    col_gap_dp = _dp(column_gap_tolerance)
+    line_gap_dp = _dp(line_gap_tolerance)
+    min_run_w_dp = _dp(min_run_w)
+    min_run_h_dp = _dp(min_run_h)
+    padding_dp = _dp(padding)
 
     masked_rects = []
     # viewport is None in headless tests that inject `grab` directly.
@@ -419,13 +427,20 @@ def detect_bricks_from_pixels(
                     colors[(buf[off + 2], buf[off + 1], buf[off])] += 1
         return colors
 
+    # How far past the ink the bg sampler peeks sideways (~1.5 logical px —
+    # the historical 3 device px on Retina). Kept narrow so it stays out of
+    # neighbouring tokens' ink and (mostly) their highlight regions.
+    bg_ring_dp = _dp(1.5)
+
     def _sample_brick_bg(x0_dp, x1_dp, y0_dp, y1_dp):
         """Most common non-ink color in and just around the brick's device
         rect — its LOCAL background (the line/token highlight it sits on), so
         the overlay can erase with a pixel-perfect fill instead of the global
         bg color. None if every sampled pixel is ink.
         """
-        colors = _rect_colors(x0_dp - 3, x1_dp + 3, y0_dp, y1_dp, want_ink=False)
+        colors = _rect_colors(
+            x0_dp - bg_ring_dp, x1_dp + bg_ring_dp, y0_dp, y1_dp, want_ink=False
+        )
         return colors.most_common(1)[0][0] if colors else None
 
     # Anything up to ~2 logical px wide is caret-shaped.
@@ -435,7 +450,7 @@ def detect_bricks_from_pixels(
     # halo (~2 logical px) — but never past the midpoint of the gap to the
     # neighbouring line/token, so erasing a dead brick can't shave the glyphs
     # next to it.
-    margin_dp = max(1, int(round(2 * dpr)))
+    margin_dp = _dp(2)
 
     def _erase_span(lo_dp, hi_dp, prev_hi_dp, next_lo_dp, limit_dp):
         """Grow the ink span [lo, hi) by margin_dp, clamped at the midpoint of
