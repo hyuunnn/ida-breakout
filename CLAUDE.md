@@ -242,6 +242,9 @@ IDA 없이도 검증 가능: `QT_QPA_PLATFORM=offscreen`으로 QApplication을 �
 fallback 경로도 같은 방식으로 테스트 가능 — `tests/test_pseudocode.py`가 이
 방식으로 검출 기하(padding/margin/중간점 클램프), local bg 샘플링, 캐럿 필터,
 dpr 1x/2x 동일성, 자식 위젯 마스킹을 numpy/pure 두 경로 모두에서 회귀 감시함.
+`grab_viewport_buffer`의 "pixmap dpr을 읽지, 폭 비율로 추정하지 않는다"는
+성질은 `QT_SCALE_FACTOR=1.5` 서브프로세스에서 실제 `QWidget.grab()`으로 검증
+(폭 1001 → 비율 추정이면 1.50050이 나와서 구분됨).
 viewport 탐지(`find_pseudocode_viewport`)와
 `overlay.py`는 IDA의 실 위젯이 필요해서 IDA 내부에서만 검증 가능.
 

@@ -9,7 +9,9 @@ Run from the repo root:
 
     python3 -m unittest discover -s tests
 """
+import ast
 import os
+import subprocess
 import sys
 import unittest
 
@@ -17,7 +19,8 @@ import unittest
 # instantiates one); harmless when tests run on a machine with a display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _ROOT)
 
 try:
     from PySide6 import QtGui, QtWidgets
@@ -235,6 +238,66 @@ class DetectTestsMixin:
             [(b.x, b.y, b.w, b.h) for b in masked],
             [(9, 9, 22, 10), (9, 39, 22, 10)],
         )
+
+
+# Runs in a subprocess because QT_SCALE_FACTOR must be set before the (per-
+# process, already created here) QApplication exists.
+_GRAB_HIDPI_SCRIPT = """\
+import sys
+sys.path.insert(0, {root!r})
+from PySide6 import QtWidgets
+app = QtWidgets.QApplication([])
+from ida_breakout_lib.pseudocode import grab_viewport_buffer
+w = QtWidgets.QWidget()
+w.resize(1001, 51)
+grab = grab_viewport_buffer(w)
+buf, gw, gh, dpr = grab
+print((gw, gh, dpr, len(buf)))
+"""
+
+
+class TestGrabViewportBuffer(unittest.TestCase):
+    def test_none_viewport_returns_none(self):
+        self.assertIsNone(pseudocode.grab_viewport_buffer(None))
+
+    def test_buffer_layout_and_size(self):
+        _ensure_app()
+        w = QtWidgets.QWidget()
+        w.resize(120, 40)
+        w.setAutoFillBackground(True)
+        pal = w.palette()
+        pal.setColor(QtGui.QPalette.Window, QtGui.QColor(10, 20, 30))
+        w.setPalette(pal)
+        grab = pseudocode.grab_viewport_buffer(w)
+        self.assertIsNotNone(grab)
+        buf, gw, gh, dpr = grab
+        self.assertEqual(gw, int(round(120 * dpr)))
+        self.assertEqual(gh, int(round(40 * dpr)))
+        self.assertEqual(len(buf), gw * gh * 4)
+        # B,G,R,x byte order — everything downstream depends on this.
+        self.assertEqual((buf[2], buf[1], buf[0]), (10, 20, 30))
+
+    def test_dpr_read_from_pixmap_not_from_size_ratio(self):
+        """At QT_SCALE_FACTOR=1.5 a 1001px-wide widget grabs to a pixmap
+        whose integer width makes width/1001 = 1.50050/1.49950 — deriving
+        dpr from that ratio (the old code) is what made brick segmentation
+        flip on 1-px window resizes. The exact 1.5 must come back."""
+        env = dict(
+            os.environ, QT_QPA_PLATFORM="offscreen", QT_SCALE_FACTOR="1.5"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", _GRAB_HIDPI_SCRIPT.format(root=_ROOT)],
+            capture_output=True, text=True, env=env, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        gw, gh, dpr, nbytes = ast.literal_eval(proc.stdout.strip().splitlines()[-1])
+        if dpr == 1.0 and gw == 1001:
+            self.skipTest("QT_SCALE_FACTOR not honored by this Qt build")
+        self.assertEqual(dpr, 1.5)
+        # Sanity: the ratio really is noisy here, so the assert above could
+        # not have passed via ratio-derived dpr.
+        self.assertNotEqual(gw / 1001.0, dpr)
+        self.assertEqual(nbytes, gw * gh * 4)
 
 
 class TestSamplerNumpy(_NumpyPath, SamplerTestsMixin, unittest.TestCase):
