@@ -13,8 +13,6 @@ IDA Pro의 Pseudocode 뷰를 그대로 Breakout(벽돌깨기) 게임으로 만�
 핫키 한 번이면 지금 보고 있는 함수가 게임판이 되고, 다시 누르면 원래
 디컴파일 결과로 돌아옴.
 
-![ida-breakout 실행 화면](images/image1.png)
-
 ## 요구사항
 
 - IDA Pro 9.0+
@@ -33,6 +31,8 @@ ln -s "$(pwd)/ida-breakout" ~/.idapro/plugins/ida-breakout
 IDA를 재시작하면 `ida_breakout_entry.py`가 자동 로드됨.
 
 ## 사용법
+
+![ida-breakout 실행 화면](images/image1.png)
 
 Pseudocode 뷰 (`F5` 디컴파일 창)에서:
 

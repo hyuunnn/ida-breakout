@@ -13,8 +13,6 @@ with the ball; the listing stays visible underneath while you play.
 One hotkey turns the function in front of you into a playfield. Press it
 again and you're back to your decompile.
 
-![ida-breakout in action](images/image1.png)
-
 ## Requirements
 
 - IDA Pro 9.0 or later
@@ -33,6 +31,8 @@ ln -s "$(pwd)/ida-breakout" ~/.idapro/plugins/ida-breakout
 Restart IDA. The plugin auto-loads via `ida_breakout_entry.py`.
 
 ## Usage
+
+![ida-breakout in action](images/image1.png)
 
 In any Pseudocode view (the `F5` decompile output):
 
