@@ -18,7 +18,6 @@ Inspired by [vim-game-code-break](https://github.com/johngrib/vim-game-code-brea
 ## Requirements
 
 - IDA Pro 9.0 or later
-- Hex-Rays Decompiler license
 - PySide6 (bundled with IDA 9.x)
 
 ## Installation
