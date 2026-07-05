@@ -13,7 +13,7 @@ IDA Pro의 Pseudocode 뷰를 그대로 Breakout(벽돌깨기) 게임으로 만�
 핫키 한 번이면 지금 보고 있는 함수가 게임판이 되고, 다시 누르면 원래
 디컴파일 결과로 돌아옴.
 
-Vim 버퍼로 같은 걸 하는 [vim-game-code-break](https://github.com/johngrib/vim-game-code-break)에서 영감을 받았음.
+[vim-game-code-break](https://github.com/johngrib/vim-game-code-break)에서 영감을 받았음.
 
 ## 요구사항
 
