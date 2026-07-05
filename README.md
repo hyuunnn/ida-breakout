@@ -13,6 +13,9 @@ with the ball; the listing stays visible underneath while you play.
 One hotkey turns the function in front of you into a playfield. Press it
 again and you're back to your decompile.
 
+Inspired by [vim-game-code-break](https://github.com/johngrib/vim-game-code-break), which does the same thing
+to your Vim buffer.
+
 ## Requirements
 
 - IDA Pro 9.0 or later
