@@ -1,5 +1,9 @@
 # ida-breakout
 
+<p align="center">
+  <img src="images/logo.png" alt="ida-breakout logo" width="720">
+</p>
+
 IDA Pro의 Pseudocode 뷰를 그대로 Breakout(벽돌깨기) 게임으로 만드는
 플러그인. 디컴파일된 C 소스의 변수명, 키워드, 숫자가 그대로 벽돌이 되고,
 밑에 깔린 디컴파일 결과는 게임 중에도 비쳐 보임.

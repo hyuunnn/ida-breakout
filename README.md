@@ -2,6 +2,10 @@
 
 [README_ko.md](README_ko.md)
 
+<p align="center">
+  <img src="images/logo.png" alt="ida-breakout logo" width="720">
+</p>
+
 Turn the IDA Pro Pseudocode view into a Breakout game. Variable names,
 keywords, and numbers in the decompiled C source become bricks you smash
 with the ball; the listing stays visible underneath while you play.
