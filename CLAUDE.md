@@ -18,6 +18,9 @@ hcli 패키징). 이 컨벤션과 어긋나는 변경은 의도적인 경우에�
 - IDA Pro 9.0+
 - Hex-Rays Decompiler 라이선스
 - PySide6 (IDA 9.x 번들). IDA 8.x는 지원하지 않음.
+- numpy — 픽셀 스캔이 numpy 벡터화라 필수 의존성 (순수 Python 폴백은 두 구현의
+  결과 동일성을 유지하는 부담 대비 이득이 없어 제거). 없으면 entry의
+  `should_load()`가 로드를 거부하고 로그로 설치 안내 (`pip install numpy`).
 
 ## 설치
 
@@ -238,10 +241,10 @@ print('ok')
 `pseudocode.py`의 검출 로직(배경색 샘플링, brick/erase rect 계산, 캐럿 필터)은
 IDA 없이도 검증 가능: `QT_QPA_PLATFORM=offscreen`으로 QApplication을 띄우고
 합성 픽셀 버퍼를 `grab=(bytes, w, h, dpr)` 파라미터로 주입하면 viewport grab을
-우회함. dpr 값을 바꿔 HiDPI 경로도, `pseudocode.np = None`으로 pure-python
-fallback 경로도 같은 방식으로 테스트 가능 — `tests/test_pseudocode.py`가 이
-방식으로 검출 기하(padding/margin/중간점 클램프), local bg 샘플링, 캐럿 필터,
-dpr 1x/2x 동일성, 자식 위젯 마스킹을 numpy/pure 두 경로 모두에서 회귀 감시함.
+우회함. dpr 값을 바꿔 HiDPI 경로도 같은 방식으로 테스트 가능 —
+`tests/test_pseudocode.py`가 이 방식으로 검출 기하(padding/margin/중간점
+클램프), local bg 샘플링, 캐럿 필터, dpr 1x/2x 동일성, 자식 위젯 마스킹을
+회귀 감시함.
 `grab_viewport_buffer`의 "pixmap dpr을 읽지, 폭 비율로 추정하지 않는다"는
 성질은 `QT_SCALE_FACTOR=1.5` 서브프로세스에서 실제 `QWidget.grab()`으로 검증
 (폭 1001 → 비율 추정이면 1.50050이 나와서 구분됨).

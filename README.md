@@ -19,6 +19,7 @@ Inspired by [vim-game-code-break](https://github.com/johngrib/vim-game-code-brea
 
 - IDA Pro 9.0 or later
 - PySide6 (bundled with IDA 9.x)
+- numpy (install into IDA's Python if missing: `pip install numpy`)
 
 ## Installation
 

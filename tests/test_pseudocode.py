@@ -2,8 +2,9 @@
 
 Follows the approach documented in CLAUDE.md: run Qt offscreen and inject a
 synthetic pixel buffer via the `grab=(bytes, w, h, dpr)` parameter, bypassing
-the real viewport grab. Every test class runs twice — once on the numpy path
-and once with `pseudocode.np = None` (pure-python fallback).
+the real viewport grab. numpy is a hard requirement of the detector (the
+entry shim's should_load() refuses to load the plugin without it), so the
+tests skip when it is missing.
 
 Run from the repo root:
 
@@ -26,6 +27,11 @@ try:
     from PySide6 import QtGui, QtWidgets
 except ImportError as exc:  # pragma: no cover
     raise unittest.SkipTest("PySide6 not available: {0}".format(exc))
+
+try:
+    import numpy  # noqa: F401 - hard dependency of the detector module
+except ImportError as exc:  # pragma: no cover
+    raise unittest.SkipTest("numpy not available: {0}".format(exc))
 
 from ida_breakout_lib import pseudocode
 
@@ -88,18 +94,6 @@ def _two_line_canvas(scale=1):
 
 def _brick_key(b):
     return (b.x, b.y, b.w, b.h, b.erase, b.bg)
-
-
-class _NumpyPath:
-    def setUp(self):
-        if pseudocode.np is None:
-            self.skipTest("numpy not available")
-
-
-class _PurePythonPath:
-    def setUp(self):
-        self.addCleanup(setattr, pseudocode, "np", pseudocode.np)
-        pseudocode.np = None
 
 
 class SamplerTestsMixin:
@@ -300,19 +294,11 @@ class TestGrabViewportBuffer(unittest.TestCase):
         self.assertEqual(nbytes, gw * gh * 4)
 
 
-class TestSamplerNumpy(_NumpyPath, SamplerTestsMixin, unittest.TestCase):
+class TestSampler(SamplerTestsMixin, unittest.TestCase):
     pass
 
 
-class TestSamplerPurePython(_PurePythonPath, SamplerTestsMixin, unittest.TestCase):
-    pass
-
-
-class TestDetectNumpy(_NumpyPath, DetectTestsMixin, unittest.TestCase):
-    pass
-
-
-class TestDetectPurePython(_PurePythonPath, DetectTestsMixin, unittest.TestCase):
+class TestDetect(DetectTestsMixin, unittest.TestCase):
     pass
 
 

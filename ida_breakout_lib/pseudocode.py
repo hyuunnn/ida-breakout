@@ -3,10 +3,12 @@ import math
 from collections import Counter
 
 from PySide6 import QtCore, QtGui, QtWidgets
-try:
-    import numpy as np
-except Exception:  # pragma: no cover - IDA bundles numpy, but keep a safe fallback.
-    np = None
+# Hard requirement: the pixel scans are numpy-vectorized (~65ms vs several
+# hundred ms pure-python at Retina fullscreen), and a pure-python fallback
+# meant maintaining two bit-identical implementations of every scan. The
+# entry shim's should_load() gates on numpy, so a missing install disables
+# the plugin up front with a log hint instead of failing here.
+import numpy as np
 
 from ida_breakout_lib.game import Brick
 
@@ -28,11 +30,6 @@ def _np_count_colors(bgr):
     for p, c in zip(uniq.tolist(), counts.tolist()):
         colors[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
     return colors
-
-
-def _px_rgb(buf, off):
-    """(r, g, b) of the BGRx pixel at byte offset `off`."""
-    return (buf[off + 2], buf[off + 1], buf[off])
 
 
 def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe_dist=60, grab=None):
@@ -63,15 +60,8 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
     buf, w, h, _dpr = grab
 
     step = 4
-    if np is not None:
-        arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[::step, ::step]
-        counter = _np_count_colors(arr[..., :3])
-    else:
-        counter = Counter()
-        for y in range(0, h, step):
-            row_off = y * w * 4
-            for x in range(0, w, step):
-                counter[_px_rgb(buf, row_off + x * 4)] += 1
+    arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[::step, ::step]
+    counter = _np_count_colors(arr[..., :3])
 
     if not counter:
         return []
@@ -377,9 +367,7 @@ def detect_bricks_from_pixels(
         buf = bytearray(buf)
         prim = bg_colors[0]
         b0, g0, r0 = prim.blue(), prim.green(), prim.red()
-        arr = None
-        if np is not None:
-            arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
+        arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)
         for mr in masked_rects:
             # Logical child geometry → device px; floor/ceil so the whole
             # rect is covered.
@@ -389,62 +377,33 @@ def detect_bricks_from_pixels(
             ye = min(h, int(math.ceil((mr.y() + mr.height()) * dpr)))
             if xe <= xs or ye <= ys:
                 continue
-            if arr is not None:
-                arr[ys:ye, xs:xe, 0] = b0
-                arr[ys:ye, xs:xe, 1] = g0
-                arr[ys:ye, xs:xe, 2] = r0
-            else:
-                for yy in range(ys, ye):
-                    base = yy * w * 4
-                    for xx in range(xs, xe):
-                        off = base + xx * 4
-                        buf[off] = b0
-                        buf[off + 1] = g0
-                        buf[off + 2] = r0
+            arr[ys:ye, xs:xe, 0] = b0
+            arr[ys:ye, xs:xe, 1] = g0
+            arr[ys:ye, xs:xe, 2] = r0
 
     bg_channels = tuple((c.blue(), c.green(), c.red()) for c in bg_colors)
 
-    ink_mask = None
-    pix_u8 = None
-    if np is not None:
-        pix_u8 = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3]  # B,G,R
-        # Channel-split planes + reused (h, w) scratch buffers. Broadcasting
-        # against all bg colors at once allocates h*w*n_bg*3 int16 temps
-        # (~430MB peak / ~430ms at Retina fullscreen); a fresh (h, w, 3) diff
-        # per color still re-allocates large temps every pass. In-place ops on
-        # two scratch planes measure ~93MB / ~65ms for the same mask.
-        chans = [pix_u8[:, :, i].astype(np.int16) for i in range(3)]
-        tmp = np.empty((h, w), dtype=np.int16)
-        acc = np.empty((h, w), dtype=np.int16)  # max 3*255 fits int16
-        ink_mask = np.ones((h, w), dtype=bool)
-        for bg_ch in bg_channels:
-            acc[:] = 0
-            for chan, c in zip(chans, bg_ch):
-                np.subtract(chan, c, out=tmp)
-                np.abs(tmp, out=tmp)
-                acc += tmp
-            ink_mask &= acc > color_threshold
-        # .tolist(): the line-range scan below reads one element per row in
-        # a Python loop, and numpy scalar indexing boxes every access into a
-        # fresh np.bool_ — ~10x slower than iterating a plain list.
-        row_has_ink = ink_mask[:, ::2].any(axis=1).tolist()
-    else:
-        def is_ink(off):
-            b = buf[off]
-            g = buf[off + 1]
-            r = buf[off + 2]
-            for bg_b, bg_g, bg_r in bg_channels:
-                if (abs(r - bg_r) + abs(g - bg_g) + abs(b - bg_b)) <= color_threshold:
-                    return False
-            return True
-
-        row_has_ink = bytearray(h)
-        for y in range(h):
-            base = y * w * 4
-            for x in range(0, w, 2):
-                if is_ink(base + x * 4):
-                    row_has_ink[y] = 1
-                    break
+    pix_u8 = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[..., :3]  # B,G,R
+    # Channel-split planes + reused (h, w) scratch buffers. Broadcasting
+    # against all bg colors at once allocates h*w*n_bg*3 int16 temps
+    # (~430MB peak / ~430ms at Retina fullscreen); a fresh (h, w, 3) diff
+    # per color still re-allocates large temps every pass. In-place ops on
+    # two scratch planes measure ~93MB / ~65ms for the same mask.
+    chans = [pix_u8[:, :, i].astype(np.int16) for i in range(3)]
+    tmp = np.empty((h, w), dtype=np.int16)
+    acc = np.empty((h, w), dtype=np.int16)  # max 3*255 fits int16
+    ink_mask = np.ones((h, w), dtype=bool)
+    for bg_ch in bg_channels:
+        acc[:] = 0
+        for chan, c in zip(chans, bg_ch):
+            np.subtract(chan, c, out=tmp)
+            np.abs(tmp, out=tmp)
+            acc += tmp
+        ink_mask &= acc > color_threshold
+    # .tolist(): the line-range scan below reads one element per row in
+    # a Python loop, and numpy scalar indexing boxes every access into a
+    # fresh np.bool_ — ~10x slower than iterating a plain list.
+    row_has_ink = ink_mask[:, ::2].any(axis=1).tolist()
 
     line_ranges = []
     y = 0
@@ -483,64 +442,33 @@ def detect_bricks_from_pixels(
         xs, xe, ys, ye = _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp)
         if xe <= xs or ye <= ys:
             return None
-        if ink_mask is not None:
-            m = ~ink_mask[ys:ye, xs:xe]
-            if not m.any():
-                return None
-            packed = _np_pack_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
-            uniq, counts = np.unique(packed, return_counts=True)
-            # Ties: argmax picks the first (= lowest packed value), matching
-            # Counter.most_common on np.unique's ascending insertion order.
-            p = int(uniq[counts.argmax()])
-            return ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)
-        colors = Counter()
-        for yy in range(ys, ye):
-            base = yy * w * 4
-            for xx in range(xs, xe):
-                off = base + xx * 4
-                if not is_ink(off):
-                    colors[_px_rgb(buf, off)] += 1
-        return colors.most_common(1)[0][0] if colors else None
+        m = ~ink_mask[ys:ye, xs:xe]
+        if not m.any():
+            return None
+        packed = _np_pack_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
+        uniq, counts = np.unique(packed, return_counts=True)
+        # Ties: argmax picks the first (= lowest packed value).
+        p = int(uniq[counts.argmax()])
+        return ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)
 
-    def _rect_ink_color_count(x0_dp, x1_dp, y0_dp, y1_dp, cap):
-        """Number of distinct exact ink colors in the rect; the pure-python
-        path early-exits at `cap` — the caret filter only asks whether there
-        are more than 2.
+    def _rect_ink_color_count(x0_dp, x1_dp, y0_dp, y1_dp):
+        """Number of distinct exact ink colors in the rect — the caret
+        filter only asks whether there are more than 2.
         """
         xs, xe, ys, ye = _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp)
         if xe <= xs or ye <= ys:
             return 0
-        if ink_mask is not None:
-            m = ink_mask[ys:ye, xs:xe]
-            if not m.any():
-                return 0
-            return int(np.unique(_np_pack_colors(pix_u8[ys:ye, xs:xe][m])).size)
-        seen = set()
-        for yy in range(ys, ye):
-            base = yy * w * 4
-            for xx in range(xs, xe):
-                off = base + xx * 4
-                if is_ink(off):
-                    seen.add(_px_rgb(buf, off))
-                    if len(seen) >= cap:
-                        return len(seen)
-        return len(seen)
+        m = ink_mask[ys:ye, xs:xe]
+        if not m.any():
+            return 0
+        return int(np.unique(_np_pack_colors(pix_u8[ys:ye, xs:xe][m])).size)
 
     # Anything up to ~2 logical px wide is caret-shaped.
     caret_max_w_dp = int(round(2 * dpr)) + 1
 
     def _run_ink_rows(x0_dp, x1_dp, y0_dp, y1_dp):
         """Number of rows in [y0, y1) where the run [x0, x1) has any ink."""
-        if ink_mask is not None:
-            return int(ink_mask[y0_dp:y1_dp, x0_dp:x1_dp].any(axis=1).sum())
-        n = 0
-        for yy in range(y0_dp, y1_dp):
-            base = yy * w * 4
-            for xx in range(x0_dp, x1_dp):
-                if is_ink(base + xx * 4):
-                    n += 1
-                    break
-        return n
+        return int(ink_mask[y0_dp:y1_dp, x0_dp:x1_dp].any(axis=1).sum())
 
     # How far an erase rect may grow past the ink to cover the anti-aliasing
     # halo (~2 logical px) — but never past the midpoint of the gap to the
@@ -595,7 +523,7 @@ def detect_bricks_from_pixels(
                 run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp
             ) >= 0.9 * (y_end_dp - y_start_dp)
             and _rect_ink_color_count(
-                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp, cap=3
+                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp
             ) <= 2
         ):
             logger.info(
@@ -619,17 +547,9 @@ def detect_bricks_from_pixels(
 
     bricks = []
     for li, (y_start, y_end) in enumerate(line_ranges):
-        if ink_mask is not None:
-            # .tolist() for the same reason as row_has_ink: the run scan
-            # below indexes per column in a Python loop.
-            col_has_ink = ink_mask[y_start:y_end, :].any(axis=0).tolist()
-        else:
-            col_has_ink = bytearray(w)
-            for x in range(w):
-                for yy in range(y_start, y_end):
-                    if is_ink((yy * w + x) * 4):
-                        col_has_ink[x] = 1
-                        break
+        # .tolist() for the same reason as row_has_ink: the run scan below
+        # indexes per column in a Python loop.
+        col_has_ink = ink_mask[y_start:y_end, :].any(axis=0).tolist()
 
         runs = []
         in_run = False

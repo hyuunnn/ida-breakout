@@ -34,6 +34,13 @@ def should_load() -> bool:
     except Exception:
         logger.warning("ida-breakout requires the Hex-Rays decompiler")
         return False
+    try:
+        import numpy  # noqa: F401
+    except Exception:
+        logger.warning(
+            "ida-breakout requires numpy — install it into IDA's Python: pip install numpy"
+        )
+        return False
     return True
 
 

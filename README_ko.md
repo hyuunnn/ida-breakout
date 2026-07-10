@@ -20,6 +20,7 @@ IDA Pro의 Pseudocode 뷰를 그대로 Breakout(벽돌깨기) 게임으로 만�
 - IDA Pro 9.0+
 - Hex-Rays Decompiler 라이선스
 - PySide6 (IDA 9.x 번들)
+- numpy (IDA의 Python에 없으면 `pip install numpy`로 설치)
 
 ## 설치
 
