@@ -403,7 +403,10 @@ def detect_bricks_from_pixels(
     # .tolist(): the line-range scan below reads one element per row in
     # a Python loop, and numpy scalar indexing boxes every access into a
     # fresh np.bool_ — ~10x slower than iterating a plain list.
-    row_has_ink = ink_mask[:, ::2].any(axis=1).tolist()
+    # Full-width scan: a stride-2 subsample here misses a 1-device-px ink
+    # column at odd x (dpr=1 thin glyphs like '|'), so its line band never
+    # opens even though the per-band column scan below would see it.
+    row_has_ink = ink_mask.any(axis=1).tolist()
 
     line_ranges = []
     y = 0
