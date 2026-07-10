@@ -121,6 +121,11 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
 
 `breakout_plugin_t(PLUGIN_MULTI)` → `breakout_plugmod_t`. plugmod에서:
 
+- **정리는 `__del__` 경유**: IDAPython은 `plugmod_t.term()`을 디스패치하지
+  않음 (bare pass 클래스, idapython 바이너리에 term 바인딩 없음) — 언로드
+  정리는 IDA가 plugmod 참조를 놓을 때 `__del__`이 `term()`을 호출하는
+  방식으로 수행. `term()`을 직접 호출해도 안전 (멱등).
+
 - `_StartGameHandler.update()`: `BWN_PSEUDOCODE` 위젯에서만 enable
 - `toggle_game()`: 게임이 뜬 탭에서 누르면 종료(토글 off). **다른** pseudocode
   탭에서 누르면 기존 게임을 정리하고 그 탭에서 새로 시작 — 단일 오버레이

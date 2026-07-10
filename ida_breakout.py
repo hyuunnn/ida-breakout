@@ -149,6 +149,17 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
         self.unregister_ui_hooks()
         self.unregister_action()
 
+    def __del__(self):
+        # IDAPython never dispatches plugmod_t.term() (plugmod_t is a bare
+        # pass-through class with no term binding) — per the plugin skill
+        # convention, teardown runs here when IDA drops its plugmod
+        # reference on unload. Swallow errors: __del__ can fire during
+        # interpreter shutdown when IDA modules are already torn down.
+        try:
+            self.term()
+        except Exception:
+            pass
+
     def toggle_game(self):
         if self.active_overlay is None:
             self.start_game()
