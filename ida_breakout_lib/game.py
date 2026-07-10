@@ -71,9 +71,13 @@ def _velocity_from_angle(speed, angle):
 _BOUNCE_EPS = 0.1  # push-out past the struck face so the next substep starts outside
 
 
-def _resolve_brick_bounce(ball, prev_x, prev_y, brick):
-    """Reflect `ball` off the brick face it actually entered through this
-    substep, using where its box was BEFORE the move (prev_x/prev_y).
+def _aabb_entry_faces(ball, prev_x, prev_y, bx0, by0, bx1, by1):
+    """Which face(s) of the box [bx0, bx1) x [by0, by1) the ball entered
+    through this substep, using where its box was BEFORE the move
+    (prev_x/prev_y). Returns (bounce_x, bounce_y, from_left, from_top):
+    when bounce_x, the struck vertical face is left iff from_left; likewise
+    bounce_y with from_top. Shared by brick AND paddle collisions so both
+    obey the same physics.
 
     Minimum penetration depth is the wrong signal here: bricks are text
     tokens — wide and thin — so a ball clipping a brick's END from below
@@ -84,16 +88,12 @@ def _resolve_brick_bounce(ball, prev_x, prev_y, brick):
 
     Corner entries (outside on both axes) resolve to the axis whose overlap
     began LATER along the actual displacement — the swept-AABB entry-time
-    rule; an exact tie reflects both. If the previous box already overlapped
-    on both axes (spawned in contact, or a neighbouring brick died between
-    substeps) there is no approach side to recover, so fall back to minimum
-    penetration. Velocity signs are SET (abs), not negated: the ball must
-    leave through the face it came from even if a same-substep wall/paddle
-    bounce already touched that component.
+    rule; an exact tie flags both. If the previous box already overlapped
+    on both axes (spawned in contact, a neighbouring brick died between
+    substeps, or the paddle slid into the ball) there is no approach side
+    to recover, so fall back to minimum penetration.
     """
     r = ball.r
-    bx0, by0 = brick.x, brick.y
-    bx1, by1 = brick.x + brick.w, brick.y + brick.h
     from_left = prev_x + r <= bx0
     from_right = prev_x - r >= bx1
     from_top = prev_y + r <= by0
@@ -129,6 +129,21 @@ def _resolve_brick_bounce(ball, prev_x, prev_y, brick):
         from_bottom = not (from_left or from_right or from_top)
         bounce_x = from_left or from_right
         bounce_y = from_top or from_bottom
+    return bounce_x, bounce_y, from_left, from_top
+
+
+def _resolve_brick_bounce(ball, prev_x, prev_y, brick):
+    """Reflect `ball` off the brick face it actually entered through this
+    substep (face selection: _aabb_entry_faces). Velocity signs are SET
+    (abs), not negated: the ball must leave through the face it came from
+    even if a same-substep wall/paddle bounce already touched that component.
+    """
+    r = ball.r
+    bx0, by0 = brick.x, brick.y
+    bx1, by1 = brick.x + brick.w, brick.y + brick.h
+    bounce_x, bounce_y, from_left, from_top = _aabb_entry_faces(
+        ball, prev_x, prev_y, bx0, by0, bx1, by1
+    )
 
     if bounce_x:
         if from_left:
@@ -285,18 +300,42 @@ class GameState:
                 ball.y = ball.r
                 ball.vy = abs(ball.vy)
 
+            # Radius-inclusive AABB + the same entry-face rules as bricks: a
+            # center-only x test let edge grazes drain (the circle visibly
+            # overlapped the paddle corner but the center was outside), and
+            # unconditionally snapping to the paddle top teleported side hits
+            # by up to paddle-height + ball-diameter in one frame.
             if (
                 ball.vy > 0
                 and ball.y + ball.r >= pd.y
                 and ball.y - ball.r <= pd.y + pd.h
-                and pd.x <= ball.x <= pd.x + pd.w
+                and ball.x + ball.r >= pd.x
+                and ball.x - ball.r <= pd.x + pd.w
             ):
-                speed = math.hypot(ball.vx, ball.vy)
-                offset = (ball.x - (pd.x + pd.w / 2.0)) / (pd.w / 2.0)
-                offset = max(-1.0, min(1.0, offset))
-                angle = offset * MAX_PADDLE_ANGLE
-                ball.vx, ball.vy = _velocity_from_angle(speed, angle)
-                ball.y = pd.y - ball.r - 0.5
+                bounce_x, bounce_y, from_left, from_top = _aabb_entry_faces(
+                    ball, prev_x, prev_y, pd.x, pd.y, pd.x + pd.w, pd.y + pd.h
+                )
+                if bounce_y and from_top:
+                    # Top hit — classic Breakout: the offset from the paddle
+                    # center picks the angle, magnitude is preserved.
+                    speed = math.hypot(ball.vx, ball.vy)
+                    offset = (ball.x - (pd.x + pd.w / 2.0)) / (pd.w / 2.0)
+                    offset = max(-1.0, min(1.0, offset))
+                    angle = offset * MAX_PADDLE_ANGLE
+                    ball.vx, ball.vy = _velocity_from_angle(speed, angle)
+                    ball.y = pd.y - ball.r - _BOUNCE_EPS
+                elif bounce_x:
+                    # Side hit: horizontal reflection only.
+                    if from_left:
+                        ball.vx = -abs(ball.vx)
+                        ball.x = pd.x - ball.r - _BOUNCE_EPS
+                    else:
+                        ball.vx = abs(ball.vx)
+                        ball.x = pd.x + pd.w + ball.r + _BOUNCE_EPS
+                # Remaining case: bounce_y via the min-penetration fallback
+                # picked the BOTTOM face (the paddle slid over a ball already
+                # sunk below its top). A descending ball can't be saved from
+                # there — let it keep falling and drain.
 
             ball_left = ball.x - ball.r
             ball_right = ball.x + ball.r

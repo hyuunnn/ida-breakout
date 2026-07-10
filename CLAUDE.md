@@ -172,8 +172,12 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
 ## 게임 메커니즘
 
 - **발사**: `±MAX_PADDLE_ANGLE` (60°) 랜덤 각도, magnitude `base_speed*√2` 고정
-- **패들 반사**: 표준 Breakout 방식. 입사 직전의 `speed = hypot(vx, vy)`를
-  측정해서 패들 중심 기준 offset∈[-1,+1]을 각도로 변환:
+- **패들 반사**: 히트 판정은 벽돌과 동일한 반지름 포함 AABB +
+  `_aabb_entry_faces` 진입면 판정 (중심점만 보면 공이 모서리에 시각적으로
+  겹쳐도 노히트로 드레인, 판정 성공 시 무조건 윗면 스냅이면 옆면 히트가
+  한 프레임에 순간이동). **윗면 진입**만 표준 Breakout 각도 반사 — 입사
+  직전의 `speed = hypot(vx, vy)`를 측정해서 패들 중심 기준 offset∈[-1,+1]을
+  각도로 변환:
   ```
   angle = offset * MAX_PADDLE_ANGLE
   vx = speed * sin(angle)
@@ -181,7 +185,9 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
   ```
   **magnitude를 보존하는 게 중요**. 가산식(`vx += offset*spin`)으로 만들면
   가장자리 hit이 누적될 때 magnitude가 73%까지 증가해서 "직선 느림 / 대각선
-  빠름" 현상이 발생.
+  빠름" 현상이 발생. **옆면 진입**은 수평 반사만 (수직 스냅 없음), 바닥면
+  fallback(패들이 이미 가라앉은 공 위로 미끄러진 경우)은 구제하지 않고
+  드레인.
 - **벽/벽돌 반사**: component 부호를 **set** (`±abs`, 단순 negate 아님) →
   magnitude 보존 + 이미 멀어지는 중인 공(벽에 겹쳐 스폰된 멀티볼 등)을
   도로 뒤집지 않음

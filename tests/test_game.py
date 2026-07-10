@@ -156,6 +156,40 @@ class WallBounceTest(unittest.TestCase):
         self.assertGreater(b.vx, 0)
 
 
+class PaddleBounceTest(unittest.TestCase):
+    """Paddle box (make_game): x in [160, 240), y in [280, 288), w=80 h=8."""
+
+    def step_with_far_brick(self, ball):
+        # An unreachable brick keeps the instant-WIN check out of the way.
+        g = make_game([Brick(x=350, y=10, w=20, h=8)], [ball])
+        g.step()
+        return ball
+
+    def test_center_top_hit_bounces_up_preserving_speed(self):
+        b = Ball(x=200.0, y=272.0, vx=1.0, vy=4.0, r=5.0)
+        speed = math.hypot(b.vx, b.vy)
+        self.step_with_far_brick(b)
+        self.assertLess(b.vy, 0)
+        self.assertAlmostEqual(math.hypot(b.vx, b.vy), speed, places=9)
+
+    def test_edge_graze_saves(self):
+        """Regression: the circle overlaps the paddle's left corner while the
+        CENTER is outside the paddle span — must bounce, not drain (the old
+        center-only x test missed exactly this)."""
+        b = self.step_with_far_brick(Ball(x=157.0, y=272.0, vx=0.0, vy=4.0, r=5.0))
+        self.assertLess(b.vy, 0)
+
+    def test_side_hit_reflects_horizontally_without_snap(self):
+        """Regression: a ball entering through the paddle's left FACE gets a
+        plain horizontal reflection — the old code teleported it to the
+        paddle top (the visible one-frame jump on edge hits)."""
+        b = self.step_with_far_brick(Ball(x=152.0, y=284.0, vx=6.0, vy=1.0, r=5.0))
+        self.assertLess(b.vx, 0)
+        self.assertAlmostEqual(b.vy, 1.0)  # vertical motion untouched
+        self.assertLess(b.x + b.r, 160.0)  # pushed out past the left face
+        self.assertGreater(b.y, 280.0)     # NOT snapped to the paddle top
+
+
 class GameFlowTest(unittest.TestCase):
     def test_same_frame_last_brick_and_drain_is_win(self):
         g = make_game([Brick(**BRICK, alive=False)],
