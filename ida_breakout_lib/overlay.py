@@ -215,6 +215,13 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
     def _restart(self):
         self.state.reset()
+        # Reset the render bookkeeping this reset invalidates, instead of
+        # relying on the consumers' "dead_bricks shrank" heuristics — those
+        # miss a restart when no paint lands before dead re-exceeds the old
+        # count (e.g. the game auto-plays while the widget is unexposed).
+        self._erase_layer = None
+        self._erased_count = 0
+        self._dirty_dead = 0
         self.timer.start()
         self.update()
 
