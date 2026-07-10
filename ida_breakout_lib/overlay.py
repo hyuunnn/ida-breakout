@@ -116,23 +116,17 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.timer.timeout.connect(self._tick)
 
         viewport.installEventFilter(self)
-        # Scroll bars NOT hosted by a QAbstractScrollArea (TEAViewer keeps
-        # them as plain sibling children, so the policy trick below can't
-        # reach them) stay live next to the overlay. Hiding them would
-        # relayout the viewport and misalign the bricks detected from the
-        # start-time grab — filter them inert instead: the eventFilter
-        # swallows their mouse/wheel/key input.
+        # Scroll bars stay VISIBLE next to the overlay: hiding them (e.g. a
+        # ScrollBarAlwaysOff policy on a scroll-area host) would relayout the
+        # viewport AFTER the grab and misalign the detected brick layout.
+        # They are filtered inert instead — the eventFilter swallows their
+        # mouse/wheel/key input. start_game() collects QScrollBars
+        # recursively, so scroll-area-hosted bars are covered the same way.
         self._scroll_bars = list(scroll_bars or ())
         for sb in self._scroll_bars:
             sb.installEventFilter(self)
-        self._saved_v_policy = None
-        self._saved_h_policy = None
         if scroll_area is not None:
             scroll_area.installEventFilter(self)
-            self._saved_v_policy = scroll_area.verticalScrollBarPolicy()
-            self._saved_h_policy = scroll_area.horizontalScrollBarPolicy()
-            scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-            scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
     def start(self):
         self.show()
@@ -164,13 +158,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
         if self.scroll_area is not None:
             try:
                 self.scroll_area.removeEventFilter(self)
-            except Exception:
-                pass
-            try:
-                if self._saved_v_policy is not None:
-                    self.scroll_area.setVerticalScrollBarPolicy(self._saved_v_policy)
-                if self._saved_h_policy is not None:
-                    self.scroll_area.setHorizontalScrollBarPolicy(self._saved_h_policy)
             except Exception:
                 pass
         try:
