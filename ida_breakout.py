@@ -3,6 +3,7 @@ import logging
 import ida_idaapi
 import ida_kernwin
 import ida_hexrays
+import ida_lines
 
 from PySide6 import QtWidgets
 
@@ -22,6 +23,58 @@ ACTION_NAME = "ida_breakout:start"
 ACTION_LABEL = "ida-breakout: Start brick break"
 ACTION_HOTKEY = "Ctrl-Alt-K"
 ACTION_TOOLTIP = "Turn this Pseudocode view into a Breakout game."
+
+
+def _clear_selection_and_highlights(twidget):
+    """Drop the drag selection and the click highlight from the pseudocode
+    viewer before the game grabs it. The overlay is translucent, so anything
+    painted by the live widget — a selection left from dragging, or the
+    yellow floating highlight from clicking a token — stays visible under
+    the game AND skews the background colors the brick detector samples for
+    its erase rects. Clearing must happen on the real viewer, not just the
+    snapshot.
+    """
+    # unmark_selection() operates on the current viewer; both call paths
+    # guarantee `twidget` is current (the action fires from it, and the
+    # toggle-from-another-tab path activates it first).
+    try:
+        ida_kernwin.unmark_selection()
+    except Exception:
+        logger.debug("ida-breakout: unmark_selection failed", exc_info=True)
+    try:
+        # Floating (click) highlight only. The 8 locked color slots
+        # (HIF_USE_SLOT) are deliberate user annotations — wiping them here
+        # would delete them permanently, which is worse than them showing
+        # through during a game.
+        ida_kernwin.set_highlight(twidget, None, 0)
+    except Exception:
+        logger.debug("ida-breakout: clearing highlight failed", exc_info=True)
+
+
+def _park_caret_off_identifier(twidget):
+    """Move the caret to a non-identifier column of its current line. The
+    yellow auto-highlight is not a sticky setting but a RECOMPUTATION: IDA
+    re-derives it from the token under the caret on later UI events (verified
+    live — a set_highlight call alone can trigger it), so clearing it while
+    the caret still sits on the clicked identifier only lasts until the next
+    recompute. With the caret parked on whitespace/punctuation every recompute
+    yields "no identifier" — the re-apply dies at the source, no polling
+    needed. Pseudocode lines always contain a non-identifier char (';', '{',
+    spaces...); the len(line) fallback is pure defence.
+    """
+    try:
+        place, _x, y = ida_kernwin.get_custom_viewer_place(twidget, False)
+        line = ida_lines.tag_remove(
+            ida_kernwin.get_custom_viewer_curline(twidget, False)
+        )
+        col = len(line)
+        for i, ch in enumerate(line):
+            if not (ch.isalnum() or ch in "_$@?"):
+                col = i
+                break
+        ida_kernwin.jumpto(twidget, place, col, y)
+    except Exception:
+        logger.debug("ida-breakout: caret parking failed", exc_info=True)
 
 
 class _StartGameHandler(ida_kernwin.action_handler_t):
@@ -204,6 +257,11 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             ida_kernwin.warning("ida-breakout: could not locate the pseudocode viewport.")
             return
 
+        # Park the caret first: jumpto may touch focus, and the caret must be
+        # off any identifier BEFORE the highlights are cleared, or the next
+        # auto-highlight recompute re-applies the clicked token mid-game.
+        _park_caret_off_identifier(twidget)
+
         # The text caret (a thin focus-only vertical bar) gets painted into
         # the grab, but disappears from screen the moment the overlay steals
         # focus — leaving an invisible brick the ball bounces off. Drop focus
@@ -212,6 +270,8 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
         focus_w = QtWidgets.QApplication.focusWidget()
         if focus_w is not None and (focus_w is qwidget or qwidget.isAncestorOf(focus_w)):
             focus_w.clearFocus()
+
+        _clear_selection_and_highlights(twidget)
 
         grab = grab_viewport_buffer(viewport)
         if grab is None:

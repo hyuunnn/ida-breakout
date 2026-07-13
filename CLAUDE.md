@@ -108,6 +108,23 @@ tests/
    글리프는 보통 anti-aliasing 때문에 3가지 이상의 ink 색을 갖지만, AA가 꺼진
    폰트(비트맵 폰트 등)에선 단색이므로 높이 조건이 좁은 글리프('l', '|')를
    구제함 — 글리프 stem은 밴드 전 행을 덮는 일이 드묾.
+7. **선택/하이라이트 방어** (issue #1): `start_game()`이 grab 전에
+   `ida_kernwin.unmark_selection()`으로 드래그 선택을,
+   `ida_kernwin.set_highlight(twidget, None, 0)`으로 클릭 시 생기는 노란색
+   floating 하이라이트를 제거. grab 정리용이 아니라 **라이브 위젯** 정리가
+   본질 — 오버레이가 반투명이라 실제 뷰어에 남은 선택/하이라이트가 게임 내내
+   비쳐 보이고, 하이라이트 배경 위에서 샘플링된 erase 색도 어긋나게 됨.
+   단발 clear로는 부족: 노란 auto-highlight는 저장된 설정이 아니라 **캐럿 아래
+   토큰에서 재계산되는 파생 상태**라, 캐럿이 클릭한 식별자 위에 있는 한 이후
+   UI 이벤트에서 재계산되며 되살아남 (라이브 검증: `set_highlight` 호출 하나로도
+   재계산이 발화. `HIF_LOCKED` sentinel도 재계산에 즉시 덮여서 잠금 접근은
+   불가). 해결은 `_park_caret_off_identifier()`: grab 전에 `jumpto(twidget,
+   place, col, y)`로 캐럿을 현재 줄의 첫 비식별자 열(공백/구두점)로 옮김 —
+   이후 어떤 재계산도 "하이라이트할 토큰 없음"이 되어 재적용이 원천 차단됨.
+   타이머 폴링 불필요. 순서 중요: 파킹 → `clearFocus()` → clear → grab.
+   8개 locked 색상 슬롯(`HIF_USE_SLOT`)은 **일부러 안 지움** — 사용자가
+   의도적으로 표시한 주석이라 게임이 영구 삭제하면 안 되고 (복원 미구현),
+   캐럿 재계산과도 무관해 게임 중 새로 생기지도 않음.
 
 ### Viewport 식별
 
