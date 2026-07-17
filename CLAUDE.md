@@ -168,10 +168,11 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
   아키텍처라 게임이 "이동"함. 이때 `start_game(twidget)`에 대상 위젯을 직접
   넘김: `stop_game()`이 이전 탭을 activate하므로 `get_current_widget()`을
   다시 읽으면 이전 탭이 나옴.
-- `start_game()`은 overlay를 `active_overlay`에 **등록한 뒤** `start()` 호출:
-  `__init__`에서 이미 이벤트 필터가 설치되므로, `start()`가 예외를 던져도
-  `stop_game()`이 정리할 수 있는 상태로 남아 입력을 삼키는 고아 오버레이가
-  안 생김.
+- `start_game()`은 overlay를 `active_overlay`에 **등록한 뒤** `start()` 호출.
+  이벤트 필터 설치는 `__init__`이 아니라 `start()` 첫 단계에서 수행 —
+  생성자는 외부 부수효과가 없어 어느 지점에서 예외가 나도 고아 필터가 안
+  남고, `start()`의 설치 중 예외는 이미 등록된 상태라 `stop_game()` →
+  `overlay.stop()`(멱등 removeEventFilter)이 정리함.
 - `_UIHooks.widget_invisible`: pseudocode 탭 닫힘 감지 → 자동 종료
 - `_UIHooks.finish_populating_widget_popup`: 우클릭 메뉴에 액션 부착
 - `_HexraysHooks.refresh_pseudocode`: 게임 중인 탭(`vu.ct == active_twidget`)의

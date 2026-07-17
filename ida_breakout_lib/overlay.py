@@ -115,20 +115,28 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.timer.setInterval(TICK_MS)
         self.timer.timeout.connect(self._tick)
 
-        viewport.installEventFilter(self)
+        # Event filters are installed in start(), NOT here: __init__ must stay
+        # free of external side effects so a mid-constructor exception (e.g. a
+        # dead C++ scrollbar object) can't leave an orphan filter swallowing
+        # viewport input before start_game() has registered the overlay for
+        # cleanup.
+        self._scroll_bars = list(scroll_bars or ())
+
+    def start(self):
+        # Filters go in before show(): start_game() registered the overlay
+        # already, so an exception from any install lands in its except-path
+        # and stop() removes whatever was installed.
+        self.viewport_widget.installEventFilter(self)
         # Scroll bars stay VISIBLE next to the overlay: hiding them (e.g. a
         # ScrollBarAlwaysOff policy on a scroll-area host) would relayout the
         # viewport AFTER the grab and misalign the detected brick layout.
         # They are filtered inert instead — the eventFilter swallows their
         # mouse/wheel/key input. start_game() collects QScrollBars
         # recursively, so scroll-area-hosted bars are covered the same way.
-        self._scroll_bars = list(scroll_bars or ())
         for sb in self._scroll_bars:
             sb.installEventFilter(self)
-        if scroll_area is not None:
-            scroll_area.installEventFilter(self)
-
-    def start(self):
+        if self.scroll_area is not None:
+            self.scroll_area.installEventFilter(self)
         self.show()
         self.raise_()
         self.setFocus(QtCore.Qt.OtherFocusReason)

@@ -307,10 +307,10 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             on_exit=self.stop_game,
             scroll_bars=scroll_bars,
         )
-        # Register BEFORE start(): __init__ already installed event filters,
-        # so if start() raises the overlay must stay reachable for
-        # stop_game() to tear down — otherwise it leaks as an orphan that
-        # keeps swallowing input over the pseudocode view.
+        # Register BEFORE start(): start() is what installs the event
+        # filters (__init__ is side-effect free), so by the time any filter
+        # exists the overlay is already reachable for stop_game() to tear
+        # down — an orphan filter swallowing input can't outlive cleanup.
         self.active_overlay = overlay
         self.active_twidget = twidget
         try:
