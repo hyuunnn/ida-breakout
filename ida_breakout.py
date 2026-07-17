@@ -1,4 +1,5 @@
 import logging
+import weakref
 
 import ida_idaapi
 import ida_kernwin
@@ -77,16 +78,30 @@ def _park_caret_off_identifier(twidget):
         logger.debug("ida-breakout: caret parking failed", exc_info=True)
 
 
+# The handler and both hook classes reference the plugmod via weakref: the
+# native action registry retains the handler until unregister_action, and a
+# strong plugmod ref there would deadlock the __del__-driven teardown
+# (unregister only runs from term(), term() only runs once the plugmod is
+# released — which the handler's ref would forever prevent). The hooks' refs
+# are weak for the same teardown: as plain-Python cycles they would merely
+# defer __del__ to an eventual gc pass, but that window is enough for a
+# reload's register_action to hit the still-registered duplicate name.
+
+
 class _StartGameHandler(ida_kernwin.action_handler_t):
     def __init__(self, plugmod):
         super().__init__()
-        self.plugmod = plugmod
+        self._plugmod = weakref.ref(plugmod)
 
     def activate(self, ctx):
-        self.plugmod.toggle_game()
+        plugmod = self._plugmod()
+        if plugmod is not None:
+            plugmod.toggle_game()
         return 1
 
     def update(self, ctx):
+        if self._plugmod() is None:
+            return ida_kernwin.AST_DISABLE_FOR_WIDGET
         if ctx.widget_type == ida_kernwin.BWN_PSEUDOCODE:
             return ida_kernwin.AST_ENABLE_FOR_WIDGET
         return ida_kernwin.AST_DISABLE_FOR_WIDGET
@@ -95,16 +110,18 @@ class _StartGameHandler(ida_kernwin.action_handler_t):
 class _UIHooks(ida_kernwin.UI_Hooks):
     def __init__(self, plugmod):
         super().__init__()
-        self.plugmod = plugmod
+        self._plugmod = weakref.ref(plugmod)
 
     def widget_invisible(self, twidget):
+        plugmod = self._plugmod()
         if (
-            self.plugmod.active_overlay is not None
+            plugmod is not None
+            and plugmod.active_overlay is not None
             and twidget is not None
-            and twidget == self.plugmod.active_twidget
+            and twidget == plugmod.active_twidget
         ):
             logger.info("ida-breakout: pseudocode tab going away, stopping game")
-            self.plugmod.stop_game()
+            plugmod.stop_game()
 
     def finish_populating_widget_popup(self, widget, popup):
         if ida_kernwin.get_widget_type(widget) == ida_kernwin.BWN_PSEUDOCODE:
@@ -114,17 +131,19 @@ class _UIHooks(ida_kernwin.UI_Hooks):
 class _HexraysHooks(ida_hexrays.Hexrays_Hooks):
     def __init__(self, plugmod):
         super().__init__()
-        self.plugmod = plugmod
+        self._plugmod = weakref.ref(plugmod)
 
     def refresh_pseudocode(self, vu):
         # Only the tab hosting the game — an F5 in another pseudocode tab
         # must not kill a running game.
+        plugmod = self._plugmod()
         if (
-            self.plugmod.active_overlay is not None
-            and vu.ct == self.plugmod.active_twidget
+            plugmod is not None
+            and plugmod.active_overlay is not None
+            and vu.ct == plugmod.active_twidget
         ):
             logger.info("ida-breakout: pseudocode refreshed (F5), stopping game")
-            self.plugmod.stop_game()
+            plugmod.stop_game()
         return 0
 
 

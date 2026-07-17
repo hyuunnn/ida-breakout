@@ -161,6 +161,14 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
   않음 (bare pass 클래스, idapython 바이너리에 term 바인딩 없음) — 언로드
   정리는 IDA가 plugmod 참조를 놓을 때 `__del__`이 `term()`을 호출하는
   방식으로 수행. `term()`을 직접 호출해도 안전 (멱등).
+  **불변식: 상주 등록 객체(액션 핸들러, UI/Hex-Rays 훅)는 plugmod를
+  `weakref`로만 참조.** 액션 핸들러는 네이티브 액션 레지스트리가
+  unregister까지 붙잡는데, 강참조면 "unregister는 term()에서만 ← term()은
+  plugmod 해제 후에만 ← 해제는 핸들러가 놓아야만"의 닭-달걀로 `__del__`이
+  영영 못 돎. 훅의 강참조는 순수 파이썬 순환이라 gc가 언젠가 수거하지만,
+  그 지연 동안 리로드가 중복 액션 이름으로 `register_action` 실패.
+  게임 중에만 존재하는 overlay의 `on_exit`(bound method) 강참조는 예외 —
+  수명이 게임 세션에 묶여 있어 상주 pin이 아님.
 
 - `_StartGameHandler.update()`: `BWN_PSEUDOCODE` 위젯에서만 enable
 - `toggle_game()`: 게임이 뜬 탭에서 누르면 종료(토글 off). **다른** pseudocode
