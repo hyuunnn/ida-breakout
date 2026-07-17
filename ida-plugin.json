@@ -2,7 +2,7 @@
   "IDAMetadataDescriptorVersion": 1,
   "plugin": {
     "name": "ida-breakout",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "entryPoint": "ida_breakout_entry.py",
     "description": "Turn the Pseudocode view into a Breakout game. Variable names, keywords, and numbers in the decompiled C source become bricks, extracted from the actually-rendered text pixels. The decompile listing stays visible underneath while you play.",
     "license": "MIT",
