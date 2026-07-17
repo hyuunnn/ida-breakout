@@ -28,19 +28,53 @@ COLOR_THRESHOLD = 40
 
 
 def _np_pack_colors(bgr):
-    """Pack a (..., 3) B,G,R uint8 array into one 0xRRGGBB uint32 per pixel
-    so np.unique can count exact colors."""
-    flat = bgr.reshape(-1, 3).astype(np.uint32)
-    return (flat[:, 2] << 16) | (flat[:, 1] << 8) | flat[:, 0]
+    """Pack a (..., 3) B,G,R uint8 array into 0xRRGGBB uint32s — one per
+    pixel, channel axis dropped, remaining shape preserved — so exact colors
+    compare and count as scalars."""
+    c = bgr.astype(np.uint32)
+    return (c[..., 2] << 16) | (c[..., 1] << 8) | c[..., 0]
 
 
-def _np_count_colors(bgr):
-    """Counter of exact (r, g, b) colors of a (..., 3) B,G,R uint8 array."""
-    uniq, counts = np.unique(_np_pack_colors(bgr), return_counts=True)
+def _unpack_color(p):
+    """Packed 0xRRGGBB int → (r, g, b)."""
+    return (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF
+
+
+def _np_count_colors(packed):
+    """Counter of exact (r, g, b) colors from packed 0xRRGGBB values."""
+    uniq, counts = np.unique(packed, return_counts=True)
     colors = Counter()
     for p, c in zip(uniq.tolist(), counts.tolist()):
-        colors[((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)] = c
+        colors[_unpack_color(p)] = c
     return colors
+
+
+def _run_edges(flags):
+    """(starts, ends) flat indices of True runs in a bool array. 2-D input is
+    zero-padded per row so runs never span a row boundary and the k-th start
+    always pairs with the k-th end; 1-D input is one row."""
+    flags2 = np.atleast_2d(flags)
+    padded = np.zeros((flags2.shape[0], flags2.shape[1] + 2), dtype=np.int8)
+    padded[:, 1:-1] = flags2
+    edges = np.diff(padded, axis=1)
+    return np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+
+
+def _scan_runs(flags, gap_tol, min_len=1):
+    """Half-open [start, end) runs of True in a 1-D bool array, merged across
+    gaps <= gap_tol. A merged run shorter than min_len is dropped as it is
+    finalized and does not bridge later merges (its neighbours see the gap
+    across it, not the run). The single run scanner behind both the line-band
+    and per-band column scans — one gap semantics for both axes."""
+    starts, ends = _run_edges(flags)
+    kept = []
+    for s, e in zip(starts.tolist(), ends.tolist()):
+        while kept and s - kept[-1][1] <= gap_tol:
+            s = kept[-1][0]
+            kept.pop()
+        if e - s >= min_len:
+            kept.append((s, e))
+    return kept
 
 
 def sample_viewport_bg_colors(
@@ -97,7 +131,8 @@ def sample_viewport_bg_colors(
 
     step = 4
     arr = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[::step, ::step]
-    counter = _np_count_colors(arr[..., :3])
+    packed_grid = _np_pack_colors(arr[..., :3])
+    counter = _np_count_colors(packed_grid)
 
     if not counter:
         return []
@@ -105,21 +140,12 @@ def sample_viewport_bg_colors(
     total = sum(counter.values())
     threshold = max(1, int(total * min_count_pct))
 
-    grid = arr[..., :3].astype(np.uint32)
-    packed_grid = (grid[..., 2] << 16) | (grid[..., 1] << 8) | grid[..., 0]
     min_band_cells = max(1, int(packed_grid.shape[1] * min_band_w_frac))
 
     def _has_wide_band(r, g, b):
-        mask = packed_grid == ((r << 16) | (g << 8) | b)
-        padded = np.zeros((mask.shape[0], mask.shape[1] + 2), dtype=np.int8)
-        padded[:, 1:-1] = mask
-        edges = np.diff(padded, axis=1)
-        starts = np.flatnonzero(edges == 1)
+        starts, ends = _run_edges(packed_grid == ((r << 16) | (g << 8) | b))
         if starts.size == 0:
             return False
-        # Row-major flattening + per-row zero padding means the k-th start
-        # always pairs with the k-th end and runs never span a row boundary.
-        ends = np.flatnonzero(edges == -1)
         return int((ends - starts).max()) >= min_band_cells
 
     result = []
@@ -373,8 +399,6 @@ def detect_bricks_from_pixels(
     """
     if not bg_colors:
         return []
-    if isinstance(bg_colors, QtGui.QColor):
-        bg_colors = [bg_colors]
     if grab is None:
         grab = grab_viewport_buffer(viewport)
         if grab is None:
@@ -406,6 +430,9 @@ def detect_bricks_from_pixels(
     min_run_h_dp = _dp_min(min_run_h)
     padding_dp = _dp(padding)
 
+    def _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp):
+        return max(0, x0_dp), min(w, x1_dp), max(0, y0_dp), min(h, y1_dp)
+
     masked_rects = []
     # viewport is None in headless tests that inject `grab` directly.
     if viewport is not None:
@@ -434,10 +461,12 @@ def detect_bricks_from_pixels(
         for mr in masked_rects:
             # Logical child geometry → device px; floor/ceil so the whole
             # rect is covered.
-            xs = max(0, int(math.floor(mr.x() * dpr)))
-            ys = max(0, int(math.floor(mr.y() * dpr)))
-            xe = min(w, int(math.ceil((mr.x() + mr.width()) * dpr)))
-            ye = min(h, int(math.ceil((mr.y() + mr.height()) * dpr)))
+            xs, xe, ys, ye = _clamp_rect(
+                int(math.floor(mr.x() * dpr)),
+                int(math.ceil((mr.x() + mr.width()) * dpr)),
+                int(math.floor(mr.y() * dpr)),
+                int(math.ceil((mr.y() + mr.height()) * dpr)),
+            )
             if xe <= xs or ye <= ys:
                 continue
             arr[ys:ye, xs:xe, 0] = b0
@@ -463,34 +492,12 @@ def detect_bricks_from_pixels(
             np.abs(tmp, out=tmp)
             acc += tmp
         ink_mask &= acc > color_threshold
-    # .tolist(): the line-range scan below reads one element per row in
-    # a Python loop, and numpy scalar indexing boxes every access into a
-    # fresh np.bool_ — ~10x slower than iterating a plain list.
     # Full-width scan: a stride-2 subsample here misses a 1-device-px ink
     # column at odd x (dpr=1 thin glyphs like '|'), so its line band never
     # opens even though the per-band column scan below would see it.
-    row_has_ink = ink_mask.any(axis=1).tolist()
-
-    line_ranges = []
-    y = 0
-    while y < h:
-        if row_has_ink[y]:
-            start = y
-            while y < h and row_has_ink[y]:
-                y += 1
-            end = y
-            while line_ranges and start - line_ranges[-1][1] <= line_gap_dp:
-                start = line_ranges[-1][0]
-                line_ranges.pop()
-            if end - start >= min_run_h_dp:
-                line_ranges.append((start, end))
-        else:
-            y += 1
+    line_ranges = _scan_runs(ink_mask.any(axis=1), line_gap_dp, min_run_h_dp)
 
     max_run_w_dp = int(w * max_run_w_ratio)
-
-    def _clamp_rect(x0_dp, x1_dp, y0_dp, y1_dp):
-        return max(0, x0_dp), min(w, x1_dp), max(0, y0_dp), min(h, y1_dp)
 
     def _sample_brick_bg(x0_dp, y0_dp, x1_dp, y1_dp):
         """Most common exact non-ink (r, g, b) inside the brick's ERASE rect —
@@ -514,8 +521,7 @@ def detect_bricks_from_pixels(
         packed = _np_pack_colors(pix_u8[ys:ye, xs:xe][m])  # (n, 3) B,G,R
         uniq, counts = np.unique(packed, return_counts=True)
         # Ties: argmax picks the first (= lowest packed value).
-        p = int(uniq[counts.argmax()])
-        return ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)
+        return _unpack_color(int(uniq[counts.argmax()]))
 
     def _rect_ink_color_count(x0_dp, x1_dp, y0_dp, y1_dp):
         """Number of distinct exact ink colors in the rect — the caret
@@ -569,8 +575,8 @@ def detect_bricks_from_pixels(
             max(1, int(math.ceil(y1_dp / dpr)) - y),
         )
 
-    def _emit_brick(run_start_dp, last_ink_dp, y_start_dp, y_end_dp, erase_dp):
-        width_dp = last_ink_dp - run_start_dp + 1
+    def _emit_brick(run_start_dp, run_end_dp, y_start_dp, y_end_dp, erase_dp):
+        width_dp = run_end_dp - run_start_dp
         if width_dp < min_run_w_dp:
             return
         if width_dp > max_run_w_dp:
@@ -586,10 +592,10 @@ def detect_bricks_from_pixels(
         if (
             width_dp <= caret_max_w_dp
             and _run_ink_rows(
-                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp
+                run_start_dp, run_end_dp, y_start_dp, y_end_dp
             ) >= 0.9 * (y_end_dp - y_start_dp)
             and _rect_ink_color_count(
-                run_start_dp, last_ink_dp + 1, y_start_dp, y_end_dp
+                run_start_dp, run_end_dp, y_start_dp, y_end_dp
             ) <= 2
         ):
             logger.info(
@@ -600,7 +606,7 @@ def detect_bricks_from_pixels(
         x_log, y_log, w_log, h_log = _rect_to_logical(
             max(0, run_start_dp - padding_dp),
             max(0, y_start_dp - padding_dp),
-            last_ink_dp + 1 + padding_dp,
+            run_end_dp + padding_dp,
             y_end_dp + padding_dp,
         )
         bricks.append(
@@ -613,29 +619,7 @@ def detect_bricks_from_pixels(
 
     bricks = []
     for li, (y_start, y_end) in enumerate(line_ranges):
-        # .tolist() for the same reason as row_has_ink: the run scan below
-        # indexes per column in a Python loop.
-        col_has_ink = ink_mask[y_start:y_end, :].any(axis=0).tolist()
-
-        runs = []
-        in_run = False
-        run_start = 0
-        last_ink = 0
-        x = 0
-        while x < w:
-            if col_has_ink[x]:
-                if not in_run:
-                    in_run = True
-                    run_start = x
-                last_ink = x
-                x += 1
-            else:
-                if in_run and (x - last_ink) > col_gap_dp:
-                    runs.append((run_start, last_ink))
-                    in_run = False
-                x += 1
-        if in_run:
-            runs.append((run_start, last_ink))
+        runs = _scan_runs(ink_mask[y_start:y_end, :].any(axis=0), col_gap_dp)
 
         erase_y0, erase_y1 = _erase_span(
             y_start,
@@ -645,16 +629,16 @@ def detect_bricks_from_pixels(
             h,
         )
 
-        for ri, (run_start, last_ink) in enumerate(runs):
+        for ri, (run_start, run_end) in enumerate(runs):
             erase_x0, erase_x1 = _erase_span(
                 run_start,
-                last_ink + 1,
-                runs[ri - 1][1] + 1 if ri > 0 else None,
+                run_end,
+                runs[ri - 1][1] if ri > 0 else None,
                 runs[ri + 1][0] if ri + 1 < len(runs) else None,
                 w,
             )
             _emit_brick(
-                run_start, last_ink, y_start, y_end,
+                run_start, run_end, y_start, y_end,
                 (erase_x0, erase_y0, erase_x1, erase_y1),
             )
 

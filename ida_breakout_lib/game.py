@@ -59,13 +59,20 @@ MAX_PADDLE_ANGLE = math.pi / 3  # 60° — matches launch angle range
 MULTIBALL_ANGLE_NOISE = 0.25    # ≈ ±14° angular jitter on split
 
 
-def _velocity_from_angle(speed, angle):
-    """(vx, vy) for an upward launch at `angle` (0 = straight up), with
-    |v| == speed. Every launch/bounce must preserve magnitude — an additive
+def _velocity_from_polar(speed, angle):
+    """(vx, vy) with |v| == speed at math-convention `angle` (0 = +x, CCW
+    toward +y = screen-down). The one place a velocity vector is built from
+    an angle: every launch/split/bounce must preserve magnitude — an additive
     formulation accumulates speed on edge hits (up to +73%), making straight
     balls slow and diagonal balls fast.
     """
-    return speed * math.sin(angle), -speed * math.cos(angle)
+    return speed * math.cos(angle), speed * math.sin(angle)
+
+
+def _velocity_from_angle(speed, angle):
+    """(vx, vy) for an upward launch at `angle` (0 = straight up), with
+    |v| == speed."""
+    return _velocity_from_polar(speed, angle - math.pi / 2)
 
 
 _BOUNCE_EPS = 0.1  # push-out past the struck face so the next substep starts outside
@@ -385,14 +392,9 @@ class GameState:
                         flip_angle = math.atan2(-ball.vy, -ball.vx) + random.uniform(
                             -MULTIBALL_ANGLE_NOISE, MULTIBALL_ANGLE_NOISE
                         )
+                        vx, vy = _velocity_from_polar(speed, flip_angle)
                         new_balls.append(
-                            Ball(
-                                x=ball.x,
-                                y=ball.y,
-                                r=ball.r,
-                                vx=speed * math.cos(flip_angle),
-                                vy=speed * math.sin(flip_angle),
-                            )
+                            Ball(x=ball.x, y=ball.y, r=ball.r, vx=vx, vy=vy)
                         )
                         self.next_multiball_score += MULTIBALL_INTERVAL
                 break

@@ -114,14 +114,8 @@ class _UIHooks(ida_kernwin.UI_Hooks):
 
     def widget_invisible(self, twidget):
         plugmod = self._plugmod()
-        if (
-            plugmod is not None
-            and plugmod.active_overlay is not None
-            and twidget is not None
-            and twidget == plugmod.active_twidget
-        ):
-            logger.info("ida-breakout: pseudocode tab going away, stopping game")
-            plugmod.stop_game()
+        if plugmod is not None:
+            plugmod.stop_if_active(twidget, "pseudocode tab going away")
 
     def finish_populating_widget_popup(self, widget, popup):
         if ida_kernwin.get_widget_type(widget) == ida_kernwin.BWN_PSEUDOCODE:
@@ -134,16 +128,9 @@ class _HexraysHooks(ida_hexrays.Hexrays_Hooks):
         self._plugmod = weakref.ref(plugmod)
 
     def refresh_pseudocode(self, vu):
-        # Only the tab hosting the game — an F5 in another pseudocode tab
-        # must not kill a running game.
         plugmod = self._plugmod()
-        if (
-            plugmod is not None
-            and plugmod.active_overlay is not None
-            and vu.ct == plugmod.active_twidget
-        ):
-            logger.info("ida-breakout: pseudocode refreshed (F5), stopping game")
-            plugmod.stop_game()
+        if plugmod is not None:
+            plugmod.stop_if_active(vu.ct, "pseudocode refreshed (F5)")
         return 0
 
 
@@ -337,6 +324,18 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             self.stop_game()
             raise
         ida_kernwin.msg("[ida-breakout] started ({0} bricks)\n".format(len(bricks)))
+
+    def stop_if_active(self, twidget, reason):
+        """Stop the game iff `twidget` is the tab hosting it. The auto-stop
+        hooks fire for every pseudocode widget — without this guard an event
+        in an unrelated tab would kill a game running elsewhere."""
+        if (
+            self.active_overlay is not None
+            and twidget is not None
+            and twidget == self.active_twidget
+        ):
+            logger.info("ida-breakout: %s, stopping game", reason)
+            self.stop_game()
 
     def stop_game(self):
         overlay = self.active_overlay

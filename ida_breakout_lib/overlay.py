@@ -74,7 +74,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self.state.reset()
 
         self._bg_color = bg_color
-        self._fill_cache = {}
         # Dead-brick erase fills are baked incrementally into this pixmap so
         # paintEvent blits one layer instead of re-drawing every dead brick.
         self._erase_layer = None
@@ -201,8 +200,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
         self._prev_dyn_region = cur
 
         dead = self.state.dead_bricks
-        if self._dirty_dead > len(dead):  # restart shrank the list
-            self._dirty_dead = 0
         for brick in dead[self._dirty_dead:]:
             region |= QtCore.QRect(*brick.erase)
         self._dirty_dead = len(dead)
@@ -235,20 +232,10 @@ class BreakoutOverlay(QtWidgets.QWidget):
             status += "    [SPACE to launch]"
         return status
 
-    def _brick_fill_color(self, brick):
-        bg = brick.bg
-        if not bg:
-            return self._bg_color
-        color = self._fill_cache.get(bg)
-        if color is None:
-            color = QtGui.QColor(*bg)
-            self._fill_cache[bg] = color
-        return color
-
     def _sync_erase_layer(self):
         """Bake bricks that died since the last frame into the cached layer.
-        The layer is rebuilt from scratch when the overlay size changes or
-        dead_bricks shrank (restart)."""
+        The layer is rebuilt from scratch when the overlay size changes;
+        restart invalidation is done explicitly by _restart()."""
         dead = self.state.dead_bricks
         dpr = self.devicePixelRatioF()
         want_w = max(1, int(round(self.width() * dpr)))
@@ -258,7 +245,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
             layer is None
             or layer.width() != want_w
             or layer.height() != want_h
-            or self._erased_count > len(dead)
         ):
             layer = QtGui.QPixmap(want_w, want_h)
             layer.setDevicePixelRatio(dpr)
@@ -272,7 +258,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
             lp.setRenderHint(QtGui.QPainter.Antialiasing, False)
             lp.setPen(QtCore.Qt.NoPen)
             for brick in dead[self._erased_count:]:
-                lp.setBrush(self._brick_fill_color(brick))
+                lp.setBrush(
+                    QtGui.QColor(*brick.bg) if brick.bg else self._bg_color
+                )
                 lp.drawRect(*brick.erase)
             lp.end()
             self._erased_count = len(dead)
