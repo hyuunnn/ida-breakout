@@ -42,7 +42,8 @@ Pseudocode 뷰 (`F5`로 디컴파일된 창)에서:
 - **이동**: `←` / `→` (또는 `h`/`l`, `a`/`d`)
 - **발사**: `Space`
 - **재시작**: `R` (WIN/LOSE 화면에서)
-- **종료**: `Esc` 또는 `Ctrl-Alt-K`
+- **종료**: `Ctrl-Alt-K` (토글). `Esc`는 IDA의 navigate-back과 겹쳐 일부러
+  안 씀 — 게임 중엔 다른 미사용 키처럼 흡수만 됨
 
 게임은 현재 함수의 디컴파일 결과 위에 투명 오버레이로 깔리고, 충돌 박스는
 실제 텍스트 픽셀에서 추출됨. 점수 15점마다 추가 공이 분기하고 (최대 5개),
@@ -170,8 +171,6 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
   plugmod 해제 후에만 ← 해제는 핸들러가 놓아야만"의 닭-달걀로 `__del__`이
   영영 못 돎. 훅의 강참조는 순수 파이썬 순환이라 gc가 언젠가 수거하지만,
   그 지연 동안 리로드가 중복 액션 이름으로 `register_action` 실패.
-  게임 중에만 존재하는 overlay의 `on_exit`(bound method) 강참조는 예외 —
-  수명이 게임 세션에 묶여 있어 상주 pin이 아님.
 
 - `_StartGameHandler.update()`: `BWN_PSEUDOCODE` 위젯에서만 enable
 - `toggle_game()`: 게임이 뜬 탭에서 누르면 종료(토글 off). **다른** pseudocode
@@ -267,8 +266,11 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
   인덱스로 ~0.04ms). 인덱스는 bricks 리스트의 identity/길이 변화에만 재빌드
   (brick 좌표는 검출 후 불변이라는 가정)
 - **종료/재시작**: WIN/LOSE 시 타이머만 정지, 자동 종료 없음. 배너 +
-  `[R] restart  [Esc] exit` 힌트 표시. `R` → `GameState.reset()`로 brick 전부
-  alive 복원, 점수/목숨/속도/멀티볼 카운터 초기화. `Esc` → 종료
+  `[R] restart  [Ctrl-Alt-K] exit` 힌트 표시. `R` → `GameState.reset()`로
+  brick 전부 alive 복원, 점수/목숨/속도/멀티볼 카운터 초기화. 종료는 토글
+  액션(`Ctrl-Alt-K`)뿐 — `Esc`는 IDA navigate-back과 충돌해 게임 exit 키에서
+  제외 (오버레이가 흡수만 함), 그래서 overlay에 exit 콜백 배관(`on_exit`)이
+  없음
 
 파라미터는 `game.py` / `overlay.py` 상단 상수 참고.
 

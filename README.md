@@ -44,7 +44,7 @@ In any Pseudocode view (the `F5` decompile output):
 | Move paddle       | `←` / `→` (or `h`/`l`, `a`/`d`)                                     |
 | Launch ball       | `Space`                                                             |
 | Restart           | `R` (after WIN / LOSE)                                              |
-| Quit              | `Esc` or `Ctrl-Alt-K` (the overlay swallows right-clicks mid-game) |
+| Quit              | `Ctrl-Alt-K` (toggle; `Esc` is not used — it collides with IDA's navigate-back) |
 
 The game runs as a transparent overlay on the decompiled function.
 Bricks are extracted from the actually-rendered text pixels — what you
@@ -56,7 +56,7 @@ Mechanics at a glance:
   across bounces; the paddle controls direction (angle), not speed.
 - Multiball: every 15 points spawns an extra ball (max 5).
 - Speed ramps up gradually as bricks break (capped at 2.0x).
-- WIN / LOSE shows a banner with `[R] restart   [Esc] exit` — no
+- WIN / LOSE shows a banner with `[R] restart   [Ctrl-Alt-K] exit` — no
   auto-close.
 
 ## Troubleshooting

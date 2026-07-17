@@ -323,7 +323,6 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             bricks,
             bg_color=bg_colors[0],
             playfield_height=playfield_h,
-            on_exit=self.stop_game,
             scroll_bars=scroll_bars,
         )
         # Register BEFORE start(): start() is what installs the event

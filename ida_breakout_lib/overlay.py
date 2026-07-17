@@ -12,7 +12,7 @@ PADDLE_W = 80
 PADDLE_H = 8
 PADDLE_BOTTOM_GAP = 24
 BALL_RADIUS = 5
-END_SCREEN_HINT = "[R] restart    [Esc] exit"
+END_SCREEN_HINT = "[R] restart    [Ctrl-Alt-K] exit"
 
 # Mouse interactions must not reach the pseudocode surface (or its scroll
 # bars) mid-game: a click moves the caret / changes the line highlight under
@@ -38,13 +38,11 @@ class BreakoutOverlay(QtWidgets.QWidget):
         bricks,
         bg_color,
         playfield_height,
-        on_exit=None,
         scroll_bars=None,
     ):
         super().__init__(viewport)
         self.viewport_widget = viewport
         self.scroll_area = scroll_area
-        self.on_exit = on_exit or (lambda: None)
         self._stopped = False
 
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
@@ -214,12 +212,6 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self._last_status = status
             region |= QtCore.QRect(0, 0, self.width(), self._status_strip_h)
         return region
-
-    def _fire_exit(self):
-        try:
-            self.on_exit()
-        except Exception:
-            logger.exception("on_exit raised")
 
     def _restart(self):
         self.state.reset()
@@ -411,5 +403,8 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self.state.launch_if_ready()
         elif pressed and k == QtCore.Qt.Key_R and self.state.phase in (Phase.WON, Phase.LOST):
             self._restart()
-        elif pressed and k == QtCore.Qt.Key_Escape:
-            self._fire_exit()
+        # Esc is deliberately NOT an exit key: it collides with IDA's own
+        # Esc (navigate back), so muscle memory would close the game when the
+        # user meant to move around code. It falls through to the swallow-all
+        # policy like any other unused key; the toggle action (its shortcut
+        # dispatches before keyPressEvent) is the only way to leave the game.
