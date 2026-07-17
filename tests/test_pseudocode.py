@@ -114,10 +114,27 @@ class SamplerTestsMixin:
         self.assertEqual([_rgb(qc) for qc in colors], [BG])
 
     def test_rare_color_below_min_count_pct_excluded(self):
-        c = Canvas(240, 100)
-        c.fill_rect(20, 40, 20, 8, (200, 0, 0))  # ~0.7% of grid samples
+        # Wide enough to pass the band gate (60px = 25% of width) but only
+        # ~0.25% of grid samples — the count cut alone must exclude it.
+        c = Canvas(240, 400)
+        c.fill_rect(0, 40, 60, 4, (200, 0, 0))
         colors = pseudocode.sample_viewport_bg_colors(None, grab=c.grab())
         self.assertEqual([_rgb(qc) for qc in colors], [BG])
+
+    def test_frequent_text_color_rejected_by_band_gate(self):
+        """A solid text color easily clears the lowered 0.5% count cut on a
+        dense screen; admitting it as background would silently erase every
+        one of its tokens from detection. Ink comes in short glyph-width
+        runs, so the wide-band gate must reject it."""
+        WHITE, TXT = (255, 255, 255), (0, 0, 0)
+        c = Canvas(400, 200, bg=WHITE)
+        for y0 in (20, 40, 60, 80):  # scattered tokens, ~2.5% coverage
+            for x0 in (10, 60):
+                c.fill_rect(x0, y0, 30, 8, TXT)
+        colors = pseudocode.sample_viewport_bg_colors(None, grab=c.grab())
+        self.assertEqual([_rgb(qc) for qc in colors], [WHITE])
+        bricks = pseudocode.detect_bricks_from_pixels(None, colors, grab=c.grab())
+        self.assertEqual(len(bricks), 8)  # every token still a brick
 
 
 class DetectTestsMixin:
@@ -159,6 +176,29 @@ class DetectTestsMixin:
         c = Canvas(240, 60)
         c.fill_rect(0, 20, 240, 20, HILITE)
         self.assertEqual(self.detect(c, bg_rgbs=(BG,)), [])
+
+    def test_light_theme_line_highlight_on_tall_viewport(self):
+        """Regression (observed live, light theme): the current-line
+        highlight (grey ~229 vs white 255, Manhattan 78 — ink-distance,
+        unlike dark themes where it sits within color_threshold of bg) is a
+        single line of a tall viewport, so it must still clear the count cut
+        (1.6% here; the old 2% cut missed it). Un-sampled, it scans as a
+        full-width ink band that max_run_w_ratio drops whole — swallowing
+        the tokens on that line AND on a pixel-adjacent neighbour line via
+        band merging (the ball flew straight through both lines)."""
+        WHITE, LHIL, TXT = (255, 255, 255), (229, 229, 229), (30, 30, 60)
+        c = Canvas(400, 1000, bg=WHITE)
+        c.fill_rect(0, 100, 400, 16, LHIL)   # full-width current-line band
+        c.fill_rect(10, 92, 40, 8, TXT)      # neighbour line, touching band
+        c.fill_rect(10, 104, 40, 8, TXT)     # token ON the highlighted line
+        c.fill_rect(10, 204, 40, 8, TXT)     # token on a normal line
+        colors = pseudocode.sample_viewport_bg_colors(None, grab=c.grab())
+        self.assertEqual([_rgb(qc) for qc in colors], [WHITE, LHIL])
+        bricks = pseudocode.detect_bricks_from_pixels(None, colors, grab=c.grab())
+        self.assertEqual(len(bricks), 3)
+        on_highlight = [b for b in bricks if 100 <= b.y <= 116]
+        self.assertEqual(len(on_highlight), 1)
+        self.assertEqual(on_highlight[0].bg, LHIL)
 
     def test_caret_bar_dropped(self):
         """A 2px-wide solid bar spanning its whole line band is caret/indent-

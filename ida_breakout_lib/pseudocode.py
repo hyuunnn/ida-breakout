@@ -32,7 +32,10 @@ def _np_count_colors(bgr):
     return colors
 
 
-def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe_dist=60, grab=None):
+def sample_viewport_bg_colors(
+    viewport, max_colors=4, min_count_pct=0.005, dedupe_dist=60,
+    min_band_w_frac=0.2, grab=None,
+):
     """Return up to `max_colors` distinct dominant colors in the viewport image,
     sorted by frequency. The first one is the primary background; subsequent
     ones are typically the current-line highlight, selection background,
@@ -44,9 +47,24 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
     - Coarse 4x grid sampling for speed.
     - Colors are counted EXACTLY (no quantization): the overlay erases dead
       bricks by filling with these colors, so an off-by-a-few value shows up
-      as a visibly wrong rectangle. Flat fills (bg, line highlight) dominate
-      the counts anyway; anti-aliasing variants each stay below
-      `min_count_pct` and never make the cut.
+      as a visibly wrong rectangle.
+    - `min_count_pct` is sized so a SINGLE current-line highlight still makes
+      the cut on a tall viewport (one ~18px line of a ~1400px window is
+      ~1.3%; 0.005 leaves headroom to ~200 lines). Missing it is not benign:
+      on the light theme the highlight grey (~229 vs white 255, Manhattan 78)
+      is ink-distance from bg, so the un-sampled band scans as full-width ink,
+      gets dropped by `max_run_w_ratio`, and swallows every real token on
+      that line (plus a pixel-adjacent neighbour line via band merging) —
+      observed live. Dark themes never showed it: their highlight sits within
+      `color_threshold` of bg and is background without being sampled.
+    - `min_band_w_frac`: a candidate only qualifies as background if somewhere
+      in the (subsampled) grid it forms a solid horizontal run at least this
+      fraction of the width. At the low count cut, frequency alone cannot
+      tell a background fill from a common INK color (a solid text color on
+      a dense screen clears 0.5% easily), and admitting an ink color
+      silently erases its tokens from detection. Fills (bg, line highlight,
+      selection) paint wide bands; glyph shades occur in short scattered
+      runs, so the band test is the discriminator.
     - `dedupe_dist` Manhattan distance threshold prevents near-identical colors.
     - `grab` lets the caller share an already-captured viewport buffer; saves
       a re-grab when the brick detector is going to run right after.
@@ -69,6 +87,23 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
     total = sum(counter.values())
     threshold = max(1, int(total * min_count_pct))
 
+    grid = arr[..., :3].astype(np.uint32)
+    packed_grid = (grid[..., 2] << 16) | (grid[..., 1] << 8) | grid[..., 0]
+    min_band_cells = max(1, int(packed_grid.shape[1] * min_band_w_frac))
+
+    def _has_wide_band(r, g, b):
+        mask = packed_grid == ((r << 16) | (g << 8) | b)
+        padded = np.zeros((mask.shape[0], mask.shape[1] + 2), dtype=np.int8)
+        padded[:, 1:-1] = mask
+        edges = np.diff(padded, axis=1)
+        starts = np.flatnonzero(edges == 1)
+        if starts.size == 0:
+            return False
+        # Row-major flattening + per-row zero padding means the k-th start
+        # always pairs with the k-th end and runs never span a row boundary.
+        ends = np.flatnonzero(edges == -1)
+        return int((ends - starts).max()) >= min_band_cells
+
     result = []
     for (r, g, b), count in counter.most_common(max_colors * 8):
         if count < threshold:
@@ -77,6 +112,12 @@ def sample_viewport_bg_colors(viewport, max_colors=4, min_count_pct=0.02, dedupe
             abs(r - rc.red()) + abs(g - rc.green()) + abs(b - rc.blue()) <= dedupe_dist
             for rc in result
         ):
+            continue
+        if min_band_w_frac > 0 and not _has_wide_band(r, g, b):
+            logger.info(
+                "ida-breakout: bg candidate (%d, %d, %d) rejected: no wide "
+                "horizontal band (ink-like)", r, g, b,
+            )
             continue
         result.append(QtGui.QColor(r, g, b))
         if len(result) >= max_colors:

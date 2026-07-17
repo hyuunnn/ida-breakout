@@ -75,6 +75,18 @@ tests/
 2. `sample_viewport_bg_colors()`로 다중 배경색 샘플링 (라인 하이라이트, 인덴트
    가이드 등 false positive 방지). 색은 양자화 없이 **정확한 픽셀값**으로
    수집 — erase fill로 그대로 쓰이므로 몇 단위만 어긋나도 사각형이 티가 남.
+   커버리지 컷(`min_count_pct=0.005`)은 **세로로 긴 창의 한 줄짜리 현재-라인
+   하이라이트도 통과**하도록 잡음 (~200줄 창까지). 라이트 테마에서 실사고:
+   하이라이트 회색(~229 vs 흰 255, 거리 78)은 다크 테마와 달리 threshold
+   밖이라, 샘플에 못 들면 full-width ink run이 돼 폭 필터에서 통째로
+   드롭되며 그 줄 + 밴드가 맞닿은 이웃 줄의 진짜 토큰까지 삼켜짐 (공이
+   두 줄을 그냥 통과). 낮은 컷에서 흔한 텍스트 색(밀집 화면에서 0.5%는
+   쉽게 넘김)이 배경 슬롯을 차지하는 오염은 **가로 밴드 게이트**
+   (`min_band_w_frac=0.2`)가 차단: 배경 후보는 서브샘플 그리드에서 폭의
+   20% 이상 연속 가로 run을 이뤄야 함 — fill은 넓은 띠, 글리프 음영은
+   짧은 조각이라는 형태 차이가 판별 기준. 탈락 시 INFO 로그
+   "bg candidate ... rejected". (`test_light_theme_line_highlight_on_tall_viewport`,
+   `test_frequent_text_color_rejected_by_band_gate`가 회귀 감시)
 3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음. erase 사각형
    (`Brick.erase`)을 먼저 계산: ink보다 ~2 logical px 크게 잡아 anti-aliasing
    halo를 덮되, 이웃 라인/토큰과의 gap **중간점**에서 클램프 — 지울 때 옆 라인
@@ -294,7 +306,8 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
 
 - `_VIEWER_CLASS_HINTS` / `_CUSTOM_CONTROL_HINTS`에 새 클래스명(부분 문자열 매칭이라
   정확한 이름을 넣어도 됨) 추가
-- `sample_viewport_bg_colors`의 `min_count_pct` / `dedupe_dist` 튜닝
+- `sample_viewport_bg_colors`의 `min_count_pct` / `dedupe_dist` /
+  `min_band_w_frac` 튜닝
 - `color_threshold` (기본 40) 튜닝
 
 ## 의도적 설계 결정
@@ -319,3 +332,10 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
   무대(brick 좌표, 배경 스냅샷)가 시작 시점 화면에 묶여 있어 리사이즈를
   따라가도 텍스트와 어긋나 의미가 없음. 진행 중인 점수 보존이 우선이라 자동
   종료도 하지 않고 게임은 그대로 진행.
+- **`dedupe_dist`(60) > `color_threshold`(40) 간극 보류**: 주 배경과 거리
+  41~60인 배경 fill은 샘플러의 dedupe에서 버려지는데 검출기에는 잉크라,
+  폭 60% 미만 + 커버리지 0.5% 이상이면 순수 배경이 벽돌이 되는 사각지대가
+  있음 (합성 버퍼로 재현 확인). 라이브 발생 사례는 없고, 고치려면
+  `dedupe_dist`를 40으로 내리면 되는데 — 흐린 잉크색(주석 등)이 배경
+  슬롯을 차지하는 부작용은 밴드 게이트가 막아주므로 이제 안전함 — 최소
+  변경 원칙으로 이번 릴리즈에서는 반영하지 않음.
