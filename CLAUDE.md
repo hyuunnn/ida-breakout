@@ -87,12 +87,15 @@ tests/
    짧은 조각이라는 형태 차이가 판별 기준. 탈락 시 INFO 로그
    "bg candidate ... rejected". (`test_light_theme_line_highlight_on_tall_viewport`,
    `test_frequent_text_color_rejected_by_band_gate`가 회귀 감시)
-   **불변식: `dedupe_dist` ≤ 검출기의 `color_threshold`(40)**. dedupe로
+   **불변식: `dedupe_dist` ≤ 검출기의 `color_threshold`**. dedupe로
    버려진 색은 남은 색 기준으로 잉크 판정을 받는데, 기준이 threshold보다
    크면 그 사이 거리의 배경 fill이 bg 리스트에도 못 들고 잉크도 되는
    사각지대가 생겨 순수 배경 띠가 벽돌이 됨 (과거 60이던 시절 합성 버퍼로
    재현 확인, `test_sampled_bg_never_yields_background_bricks`가 회귀
-   감시). 40으로 내리면 흐린 잉크색(주석 등)이 배경 슬롯을 차지할 수
+   감시). 두 파라미터는 `pseudocode.py`의 **공유 상수 `COLOR_THRESHOLD`(40)를
+   기본값으로 함께 씀** — 불변식이 구조적으로 성립하므로 튜닝은 상수
+   하나로 할 것 (개별 기본값을 따로 바꾸면 불변식이 다시 깨질 수 있음).
+   40으로 내리면 흐린 잉크색(주석 등)이 배경 슬롯을 차지할 수
    있는데 이는 밴드 게이트가 차단.
 3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음. erase 사각형
    (`Brick.erase`)을 먼저 계산: ink보다 ~2 logical px 크게 잡아 anti-aliasing
@@ -322,9 +325,9 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
 
 - `_VIEWER_CLASS_HINTS` / `_CUSTOM_CONTROL_HINTS`에 새 클래스명(부분 문자열 매칭이라
   정확한 이름을 넣어도 됨) 추가
-- `sample_viewport_bg_colors`의 `min_count_pct` / `dedupe_dist` /
-  `min_band_w_frac` 튜닝
-- `color_threshold` (기본 40) 튜닝
+- `sample_viewport_bg_colors`의 `min_count_pct` / `min_band_w_frac` 튜닝
+- `COLOR_THRESHOLD` (기본 40) 튜닝 — `dedupe_dist`와 `color_threshold`의
+  공유 기본값이라 이 상수 하나로 둘이 함께 움직임
 
 ## 의도적 설계 결정
 

@@ -15,6 +15,17 @@ from ida_breakout_lib.game import Brick
 
 logger = logging.getLogger(__name__)
 
+# Manhattan RGB distance under which two colors count as "the same". Shared
+# default of the bg sampler's `dedupe_dist` AND the brick detector's
+# `color_threshold` so the invariant dedupe_dist <= color_threshold holds by
+# construction: a color deduped out of the bg list is judged against the KEPT
+# colors downstream, and any gap between the two thresholds is a blind spot
+# where a pure background band lands in neither class and turns into phantom
+# bricks (reproduced with a synthetic buffer back when dedupe was 60;
+# test_sampled_bg_never_yields_background_bricks guards the regression).
+# Tune THIS constant, not the two call-site defaults separately.
+COLOR_THRESHOLD = 40
+
 
 def _np_pack_colors(bgr):
     """Pack a (..., 3) B,G,R uint8 array into one 0xRRGGBB uint32 per pixel
@@ -33,7 +44,7 @@ def _np_count_colors(bgr):
 
 
 def sample_viewport_bg_colors(
-    viewport, max_colors=4, min_count_pct=0.005, dedupe_dist=40,
+    viewport, max_colors=4, min_count_pct=0.005, dedupe_dist=COLOR_THRESHOLD,
     min_band_w_frac=0.2, grab=None,
 ):
     """Return up to `max_colors` distinct dominant colors in the viewport image,
@@ -66,12 +77,13 @@ def sample_viewport_bg_colors(
       selection) paint wide bands; glyph shades occur in short scattered
       runs, so the band test is the discriminator.
     - `dedupe_dist` Manhattan distance threshold prevents near-identical colors.
-      It must stay <= the detector's `color_threshold` (40): a color deduped
-      away here is classified relative to the KEPT colors downstream, so if
-      it can be farther than `color_threshold` from all of them it becomes
-      ink — and an empty background band in that distance window turns into
-      phantom bricks. Keeping the two thresholds aligned guarantees every
-      deduped color is also background to the detector.
+      It must stay <= the detector's `color_threshold`; both default to the
+      shared `COLOR_THRESHOLD` constant so the invariant holds by
+      construction — tune that constant, not the two defaults separately.
+      A color deduped away here is classified relative to the KEPT colors
+      downstream, so if it can be farther than `color_threshold` from all of
+      them it becomes ink — and an empty background band in that distance
+      window turns into phantom bricks.
     - `grab` lets the caller share an already-captured viewport buffer; saves
       a re-grab when the brick detector is going to run right after.
     """
@@ -328,7 +340,7 @@ def grab_viewport_buffer(viewport):
 def detect_bricks_from_pixels(
     viewport,
     bg_colors,
-    color_threshold=40,
+    color_threshold=COLOR_THRESHOLD,
     column_gap_tolerance=2.0,
     line_gap_tolerance=0.5,
     min_run_w=1.0,
