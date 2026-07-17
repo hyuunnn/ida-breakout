@@ -185,7 +185,10 @@ Pseudocode 외곽 widget은 `TEAViewer`. 그 안의 가장 큰 visible child(vie
 - `_UIHooks.widget_invisible`: pseudocode 탭 닫힘 감지 → 자동 종료
 - `_UIHooks.finish_populating_widget_popup`: 우클릭 메뉴에 액션 부착
 - `_HexraysHooks.refresh_pseudocode`: 게임 중인 탭(`vu.ct == active_twidget`)의
-  F5 재디컴파일만 감지 → 자동 종료. 다른 pseudocode 탭의 F5는 무시
+  재디컴파일만 감지 → 자동 종료. 다른 pseudocode 탭의 refresh는 무시.
+  게임 탭 안에서의 F5는 오버레이의 ShortcutOverride 차단으로 애초에 발동하지
+  않으므로, 이 훅은 게임 밖에서 유발된 재디컴파일(다른 뷰에서의 rename/undo,
+  스크립트 등)에 대한 방어
 
 `stop_game()` 마지막에 `ida_kernwin.activate_widget(twidget, True)`을 호출하는
 이유: overlay가 `deleteLater()`로 사라진 직후 IDA의 current widget이 일시적으로
@@ -213,8 +216,20 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
 이벤트는 부모 viewport로 전파돼 PageUp/Down이 코드를 스크롤시키고, 클릭은
 캐럿/라인 하이라이트를 움직여 구워 둔 erase 색과 어긋나게 하며, 더블클릭
 네비게이션은 재디컴파일 → `refresh_pseudocode` 훅이 게임을 강제 종료시키므로.
-액션 단축키(토글 핫키 등)는 keyPressEvent 전달 전에 디스패치되므로 여전히
-동작함. TEAViewer는 스크롤바를 QAbstractScrollArea 없이 평범한 자식 위젯으로
+**IDA 액션 단축키(Esc navigate-back, F5 등)는 키 흡수로 안 막힘** — Qt가
+keyPressEvent 이전의 단축키 단계에서 디스패치하므로. 오버레이가
+`ShortcutOverride`를 accept해 일반 키 이벤트로 강등시킨 뒤 흡수하는 방식으로
+차단하며 (overlay `event()` + eventFilter 양쪽), **토글 콤보만 예외**로
+통과시킴 — 게임을 끝낼 유일한 수단이므로. 콤보는 `start_game()`이
+`ACTION_HOTKEY`에서 QKeyCombination으로 변환해 주입 (IDA 핫키 문법은 대시,
+Qt는 플러스). **Tab(디스어셈블리 전환)은 이걸로도 안 막힘** — IDA가 Qt 단축키
+맵이 아니라 애플리케이션 레벨 이벤트 필터에서 raw KeyPress로 처리해, 포커스
+위젯에 이벤트가 닿기 전에 발동함 (라이브 검증: Esc는 ShortcutOverride로
+막히고 Tab은 안 막혔음). 해결은 `_AppLevelKeyFilter`: 게임 시작 시
+QApplication에 설치 — Qt는 나중에 설치된 앱 필터를 먼저 실행하므로 IDA보다
+선점 — 게임 위젯(`owns_key_target`)으로 향하는 Tab/Backtab만 삼키고 다른
+도크로 가는 키는 건드리지 않음. stop()에서 제거.
+TEAViewer는 스크롤바를 QAbstractScrollArea 없이 평범한 자식 위젯으로
 두어 스크롤바 policy 트릭이 안 통함 — `start_game()`이 outer 위젯 아래의 모든
 `QScrollBar`를 모아 overlay에 넘기고, overlay가 같은 eventFilter로 입력만
 무력화함 (숨기면 viewport가 재배치되어 시작 시점 grab 기준의 brick 좌표가

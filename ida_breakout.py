@@ -6,7 +6,7 @@ import ida_kernwin
 import ida_hexrays
 import ida_lines
 
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 
 from ida_breakout_lib.overlay import BreakoutOverlay
 from ida_breakout_lib.pseudocode import (
@@ -304,6 +304,11 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
         # so the overlay must filter them inert or a mid-game drag scrolls
         # the text out from under the frozen brick layout.
         scroll_bars = qwidget.findChildren(QtWidgets.QScrollBar)
+        # The overlay suppresses every IDA action shortcut mid-game (Esc =
+        # navigate back, Tab = view switch, ...) except this one — the toggle
+        # must keep working to exit. IDA hotkey syntax uses dashes; Qt wants
+        # plusses.
+        toggle_seq = QtGui.QKeySequence(ACTION_HOTKEY.replace("-", "+"))
         overlay = BreakoutOverlay(
             viewport,
             scroll_area,
@@ -311,6 +316,7 @@ class breakout_plugmod_t(ida_idaapi.plugmod_t):
             bg_color=bg_colors[0],
             playfield_height=playfield_h,
             scroll_bars=scroll_bars,
+            toggle_combo=toggle_seq[0] if toggle_seq.count() else None,
         )
         # Register BEFORE start(): start() is what installs the event
         # filters (__init__ is side-effect free), so by the time any filter

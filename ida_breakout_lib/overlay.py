@@ -27,6 +27,42 @@ _MOUSE_EVENT_TYPES = frozenset({
     QtCore.QEvent.ContextMenu,
 })
 
+_KEY_EVENT_TYPES = frozenset({
+    QtCore.QEvent.ShortcutOverride,
+    QtCore.QEvent.KeyPress,
+    QtCore.QEvent.KeyRelease,
+})
+
+
+class _AppLevelKeyFilter(QtCore.QObject):
+    """Application-level interceptor for keys IDA handles OUTSIDE the Qt
+    shortcut map. Tab (pseudocode/disassembly switch) never resolves through
+    a blockable ShortcutOverride — IDA's own application event filter acts on
+    the raw KeyPress before the focus widget sees it — so widget-side
+    swallowing can't stop it. This filter goes on QApplication at game start;
+    Qt runs the LAST installed app filter FIRST, so it preempts IDA's and
+    swallows the key when it targets a game surface."""
+
+    _KEYS = (QtCore.Qt.Key_Tab, QtCore.Qt.Key_Backtab)
+
+    def __init__(self, overlay):
+        # Parented to the overlay: dies with it even if an unwind skips stop().
+        super().__init__(overlay)
+        self._overlay = overlay
+
+    def eventFilter(self, obj, ev):
+        # Called for EVERY event in the application while the game runs —
+        # the type check must reject non-key traffic as cheaply as possible.
+        if ev.type() not in _KEY_EVENT_TYPES:
+            return False
+        if ev.key() not in self._KEYS:
+            return False
+        if not self._overlay.owns_key_target(obj):
+            return False
+        if ev.type() == QtCore.QEvent.ShortcutOverride:
+            ev.accept()
+        return True
+
 
 class BreakoutOverlay(QtWidgets.QWidget):
     """Transparent child widget over the pseudocode viewport that hosts the game."""
@@ -39,10 +75,16 @@ class BreakoutOverlay(QtWidgets.QWidget):
         bg_color,
         playfield_height,
         scroll_bars=None,
+        toggle_combo=None,
     ):
         super().__init__(viewport)
         self.viewport_widget = viewport
         self.scroll_area = scroll_area
+        # QKeyCombination of the game's toggle action — the ONE shortcut
+        # allowed to fire mid-game (it is the only way to exit). Everything
+        # else is suppressed at ShortcutOverride time; see _override_shortcut.
+        self._toggle_combo = toggle_combo
+        self._app_key_filter = _AppLevelKeyFilter(self)
         self._stopped = False
 
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
@@ -134,6 +176,9 @@ class BreakoutOverlay(QtWidgets.QWidget):
             sb.installEventFilter(self)
         if self.scroll_area is not None:
             self.scroll_area.installEventFilter(self)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._app_key_filter)
         self.show()
         self.raise_()
         self.setFocus(QtCore.Qt.OtherFocusReason)
@@ -149,6 +194,12 @@ class BreakoutOverlay(QtWidgets.QWidget):
         # 모든 정리는 죽은 C++ 객체(RuntimeError)를 만날 수 있어 조용히 넘긴다.
         try:
             self.timer.stop()
+        except Exception:
+            pass
+        try:
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self._app_key_filter)
         except Exception:
             pass
         try:
@@ -325,10 +376,49 @@ class BreakoutOverlay(QtWidgets.QWidget):
     # Keys the game doesn't use are swallowed too (accept / return True):
     # an ignored key event propagates to the parent viewport, where PageUp/
     # Down & co. would scroll the code out from under the brick layout.
-    # Action shortcuts (e.g. the toggle hotkey) are dispatched before
-    # keyPressEvent delivery, so they still work. Mouse events are swallowed
-    # for the same reason (see _MOUSE_EVENT_TYPES): ignored ones propagate
-    # to the viewport and mutate the surface the game snapshotted.
+    # Mouse events are swallowed for the same reason (see _MOUSE_EVENT_TYPES):
+    # ignored ones propagate to the viewport and mutate the surface the game
+    # snapshotted.
+    #
+    # Plain key swallowing does NOT stop IDA action shortcuts (Esc = navigate
+    # back, Tab = view switch, F5, G, ...): Qt dispatches those at the
+    # shortcut stage, before any keyPressEvent exists to swallow. Accepting
+    # the ShortcutOverride event demotes the keystroke to an ordinary key
+    # event (which the handlers below then swallow). The toggle hotkey is
+    # exempted — it is the only way to leave the game.
+
+    def owns_key_target(self, obj):
+        """True if a key event delivered to `obj` belongs to the game: the
+        overlay itself, the snapshotted viewport, or a filtered satellite
+        (scroll bars / scroll-area host / any viewport descendant). Used by
+        the app-level filter so it never touches keys typed into unrelated
+        IDA docks."""
+        try:
+            if obj is self or obj is self.viewport_widget or obj is self.scroll_area:
+                return True
+            if obj in self._scroll_bars:
+                return True
+            return (
+                isinstance(obj, QtWidgets.QWidget)
+                and self.viewport_widget is not None
+                and self.viewport_widget.isAncestorOf(obj)
+            )
+        except Exception:
+            # Dead C++ objects mid-teardown: claim nothing.
+            return False
+
+    def _override_shortcut(self, ev):
+        """True if this ShortcutOverride was claimed (suppressing the ambient
+        IDA shortcut); False for the toggle combo, which must keep firing."""
+        if self._toggle_combo is not None and ev.keyCombination() == self._toggle_combo:
+            return False
+        ev.accept()
+        return True
+
+    def event(self, ev):
+        if ev.type() == QtCore.QEvent.ShortcutOverride and self._override_shortcut(ev):
+            return True
+        return super().event(ev)
 
     def keyPressEvent(self, ev):
         self._handle_key(ev, pressed=True)
@@ -366,6 +456,11 @@ class BreakoutOverlay(QtWidgets.QWidget):
 
     def eventFilter(self, obj, ev):
         et = ev.type()
+        if et == QtCore.QEvent.ShortcutOverride:
+            # Same suppression when focus sits on the viewport/scroll bars
+            # instead of the overlay; False (toggle combo) lets its shortcut
+            # fire.
+            return self._override_shortcut(ev)
         if et == QtCore.QEvent.KeyPress:
             self._handle_key(ev, pressed=True)
             return True
