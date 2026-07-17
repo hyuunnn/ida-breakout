@@ -44,7 +44,7 @@ In any Pseudocode view (the `F5` decompile output):
 | Move paddle       | `←` / `→` (or `h`/`l`, `a`/`d`)                                     |
 | Launch ball       | `Space`                                                             |
 | Restart           | `R` (after WIN / LOSE)                                              |
-| Quit              | `Ctrl-Alt-K` (toggle; `Esc` is not used — it collides with IDA's navigate-back) |
+| Quit              | `Ctrl-Alt-K` (toggle)                                               |
 
 The game runs as a transparent overlay on the decompiled function.
 Bricks are extracted from the actually-rendered text pixels — what you

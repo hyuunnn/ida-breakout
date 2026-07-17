@@ -403,8 +403,3 @@ class BreakoutOverlay(QtWidgets.QWidget):
             self.state.launch_if_ready()
         elif pressed and k == QtCore.Qt.Key_R and self.state.phase in (Phase.WON, Phase.LOST):
             self._restart()
-        # Esc is deliberately NOT an exit key: it collides with IDA's own
-        # Esc (navigate back), so muscle memory would close the game when the
-        # user meant to move around code. It falls through to the swallow-all
-        # policy like any other unused key; the toggle action (its shortcut
-        # dispatches before keyPressEvent) is the only way to leave the game.

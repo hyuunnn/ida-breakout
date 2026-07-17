@@ -42,8 +42,7 @@ Pseudocode 뷰 (`F5`로 디컴파일된 창)에서:
 - **이동**: `←` / `→` (또는 `h`/`l`, `a`/`d`)
 - **발사**: `Space`
 - **재시작**: `R` (WIN/LOSE 화면에서)
-- **종료**: `Ctrl-Alt-K` (토글). `Esc`는 IDA의 navigate-back과 겹쳐 일부러
-  안 씀 — 게임 중엔 다른 미사용 키처럼 흡수만 됨
+- **종료**: `Ctrl-Alt-K` (토글)
 
 게임은 현재 함수의 디컴파일 결과 위에 투명 오버레이로 깔리고, 충돌 박스는
 실제 텍스트 픽셀에서 추출됨. 점수 15점마다 추가 공이 분기하고 (최대 5개),
@@ -268,9 +267,7 @@ WIN/LOSE 전환 프레임만 배너 때문에 전체 update. viewport에 설치�
 - **종료/재시작**: WIN/LOSE 시 타이머만 정지, 자동 종료 없음. 배너 +
   `[R] restart  [Ctrl-Alt-K] exit` 힌트 표시. `R` → `GameState.reset()`로
   brick 전부 alive 복원, 점수/목숨/속도/멀티볼 카운터 초기화. 종료는 토글
-  액션(`Ctrl-Alt-K`)뿐 — `Esc`는 IDA navigate-back과 충돌해 게임 exit 키에서
-  제외 (오버레이가 흡수만 함), 그래서 overlay에 exit 콜백 배관(`on_exit`)이
-  없음
+  액션뿐
 
 파라미터는 `game.py` / `overlay.py` 상단 상수 참고.
 
