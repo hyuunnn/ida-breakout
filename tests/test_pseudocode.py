@@ -109,9 +109,19 @@ class SamplerTestsMixin:
 
     def test_near_identical_color_deduped(self):
         c = Canvas(240, 100)
-        c.fill_rect(0, 40, 240, 16, (60, 60, 60))  # Manhattan 60 from BG
+        c.fill_rect(0, 40, 240, 16, (50, 50, 50))  # Manhattan 30 from BG
         colors = pseudocode.sample_viewport_bg_colors(None, grab=c.grab())
         self.assertEqual([_rgb(qc) for qc in colors], [BG])
+
+    def test_ink_distinguishable_color_gets_own_slot(self):
+        """A fill farther than the detector's color_threshold (40) from BG
+        must NOT be deduped away: the detector would classify it as ink and
+        an empty background band would become bricks. dedupe_dist (40) <=
+        color_threshold guarantees every deduped color is also non-ink."""
+        c = Canvas(240, 100)
+        c.fill_rect(0, 40, 240, 16, (55, 55, 55))  # Manhattan 45: ink-distance
+        colors = pseudocode.sample_viewport_bg_colors(None, grab=c.grab())
+        self.assertEqual([_rgb(qc) for qc in colors], [BG, (55, 55, 55)])
 
     def test_rare_color_below_min_count_pct_excluded(self):
         # Wide enough to pass the band gate (60px = 25% of width) but only
@@ -135,6 +145,12 @@ class SamplerTestsMixin:
         self.assertEqual([_rgb(qc) for qc in colors], [WHITE])
         bricks = pseudocode.detect_bricks_from_pixels(None, colors, grab=c.grab())
         self.assertEqual(len(bricks), 8)  # every token still a brick
+        # min_band_w_frac=0 disables the gate (convention: explicit 0 turns a
+        # knob off), letting the same scattered color through on count alone.
+        ungated = pseudocode.sample_viewport_bg_colors(
+            None, grab=c.grab(), min_band_w_frac=0
+        )
+        self.assertEqual([_rgb(qc) for qc in ungated], [WHITE, TXT])
 
 
 class DetectTestsMixin:
@@ -176,6 +192,19 @@ class DetectTestsMixin:
         c = Canvas(240, 60)
         c.fill_rect(0, 20, 240, 20, HILITE)
         self.assertEqual(self.detect(c, bg_rgbs=(BG,)), [])
+
+    def test_sampled_bg_never_yields_background_bricks(self):
+        """End-to-end sampler -> detector: a partial-width background fill
+        just past the ink threshold (Manhattan 45..60) used to be deduped
+        out of the bg list (old dedupe_dist=60) while still counting as ink,
+        so an empty background band became a brick the ball bounced off.
+        It must get its own bg slot and produce no bricks."""
+        c = Canvas(400, 100)
+        c.fill_rect(40, 40, 120, 16, (60, 60, 50))  # dist 50; 4.8% cover; 30% width
+        colors = pseudocode.sample_viewport_bg_colors(None, grab=c.grab())
+        self.assertIn((60, 60, 50), [_rgb(qc) for qc in colors])
+        bricks = pseudocode.detect_bricks_from_pixels(None, colors, grab=c.grab())
+        self.assertEqual(bricks, [])
 
     def test_light_theme_line_highlight_on_tall_viewport(self):
         """Regression (observed live, light theme): the current-line

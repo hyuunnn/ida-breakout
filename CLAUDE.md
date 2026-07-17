@@ -87,6 +87,13 @@ tests/
    짧은 조각이라는 형태 차이가 판별 기준. 탈락 시 INFO 로그
    "bg candidate ... rejected". (`test_light_theme_line_highlight_on_tall_viewport`,
    `test_frequent_text_color_rejected_by_band_gate`가 회귀 감시)
+   **불변식: `dedupe_dist` ≤ 검출기의 `color_threshold`(40)**. dedupe로
+   버려진 색은 남은 색 기준으로 잉크 판정을 받는데, 기준이 threshold보다
+   크면 그 사이 거리의 배경 fill이 bg 리스트에도 못 들고 잉크도 되는
+   사각지대가 생겨 순수 배경 띠가 벽돌이 됨 (과거 60이던 시절 합성 버퍼로
+   재현 확인, `test_sampled_bg_never_yields_background_bricks`가 회귀
+   감시). 40으로 내리면 흐린 잉크색(주석 등)이 배경 슬롯을 차지할 수
+   있는데 이는 밴드 게이트가 차단.
 3. 행/열 단위로 ink 스캔 → 연속 영역을 brick으로 묶음. erase 사각형
    (`Brick.erase`)을 먼저 계산: ink보다 ~2 logical px 크게 잡아 anti-aliasing
    halo를 덮되, 이웃 라인/토큰과의 gap **중간점**에서 클램프 — 지울 때 옆 라인
@@ -332,10 +339,3 @@ Brick 검출이 실패(`bricks=0`)하거나 viewport 클래스가 모르는 빌�
   무대(brick 좌표, 배경 스냅샷)가 시작 시점 화면에 묶여 있어 리사이즈를
   따라가도 텍스트와 어긋나 의미가 없음. 진행 중인 점수 보존이 우선이라 자동
   종료도 하지 않고 게임은 그대로 진행.
-- **`dedupe_dist`(60) > `color_threshold`(40) 간극 보류**: 주 배경과 거리
-  41~60인 배경 fill은 샘플러의 dedupe에서 버려지는데 검출기에는 잉크라,
-  폭 60% 미만 + 커버리지 0.5% 이상이면 순수 배경이 벽돌이 되는 사각지대가
-  있음 (합성 버퍼로 재현 확인). 라이브 발생 사례는 없고, 고치려면
-  `dedupe_dist`를 40으로 내리면 되는데 — 흐린 잉크색(주석 등)이 배경
-  슬롯을 차지하는 부작용은 밴드 게이트가 막아주므로 이제 안전함 — 최소
-  변경 원칙으로 이번 릴리즈에서는 반영하지 않음.

@@ -33,7 +33,7 @@ def _np_count_colors(bgr):
 
 
 def sample_viewport_bg_colors(
-    viewport, max_colors=4, min_count_pct=0.005, dedupe_dist=60,
+    viewport, max_colors=4, min_count_pct=0.005, dedupe_dist=40,
     min_band_w_frac=0.2, grab=None,
 ):
     """Return up to `max_colors` distinct dominant colors in the viewport image,
@@ -66,6 +66,12 @@ def sample_viewport_bg_colors(
       selection) paint wide bands; glyph shades occur in short scattered
       runs, so the band test is the discriminator.
     - `dedupe_dist` Manhattan distance threshold prevents near-identical colors.
+      It must stay <= the detector's `color_threshold` (40): a color deduped
+      away here is classified relative to the KEPT colors downstream, so if
+      it can be farther than `color_threshold` from all of them it becomes
+      ink — and an empty background band in that distance window turns into
+      phantom bricks. Keeping the two thresholds aligned guarantees every
+      deduped color is also background to the detector.
     - `grab` lets the caller share an already-captured viewport buffer; saves
       a re-grab when the brick detector is going to run right after.
     """
@@ -105,7 +111,11 @@ def sample_viewport_bg_colors(
         return int((ends - starts).max()) >= min_band_cells
 
     result = []
-    for (r, g, b), count in counter.most_common(max_colors * 8):
+    # No fixed candidate window: the `count < threshold` break already bounds
+    # the scan. A top-N window sized for the old 2% cut could be exhausted by
+    # gate-rejected ink shades at the 0.5% cut, starving a real highlight
+    # ranked just below them.
+    for (r, g, b), count in counter.most_common():
         if count < threshold:
             break
         if any(
